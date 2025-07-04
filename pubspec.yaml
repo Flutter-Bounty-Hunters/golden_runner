@@ -1,0 +1,21 @@
+name: golden_runner
+description: CLI app to test and update goldens in a less flaky way
+version: 0.1.0
+homepage: https://github.com/flutter-bounty-hunters/golden_runner
+
+executables:
+  goldens:
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  args: ^2.3.1
+  logging: ^1.3.0
+  meta: ^1.8.0
+  path: ^1.8.3
+
+dev_dependencies:
+  test: ^1.21.0
+  lints: ^5.1.1
+  mocktail: ^1.0.4
