@@ -1,4 +1,4 @@
-## 0.0.1
+## 0.1.0
 Initial Release:
  * CLI app called `goldens`.
    * Test goldens with `goldens test`.
