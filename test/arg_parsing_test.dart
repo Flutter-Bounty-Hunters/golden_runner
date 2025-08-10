@@ -21,7 +21,7 @@ void main() {
       test("with test flags", () async {
         final goldenRequest = parseTestCommandArguments(["--verbose", "test_goldens"]);
 
-        expect(goldenRequest.dockerFilePath, './golden_tester.Dockerfile');
+        expect(goldenRequest.dockerFilePath, null);
         expect(goldenRequest.dockerImageName, 'golden_tester');
         expect(goldenRequest.pathToProjectRoot, '.');
         expect(goldenRequest.testBaseDirectory, 'test_goldens');
