@@ -12,7 +12,6 @@ class GoldensRunner {
   static const argVerbose = "--verbose";
   static const argVerboseShort = "-v";
 
-  static const defaultDockerfilePath = "./golden_tester.Dockerfile";
   static const defaultDockerImageName = "golden_tester";
   static const defaultPathToProjectRoot = ".";
   static const defaultTestDirectoryPath = "test_goldens";
@@ -130,7 +129,7 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
   GrLog.commands.fine("Test command arguments: $testCommandArguments");
 
   return GoldenRequest(
-    dockerFilePath: options[GoldensRunner.argDockerFilePath] ?? GoldensRunner.defaultDockerfilePath,
+    dockerFilePath: options[GoldensRunner.argDockerFilePath],
     dockerImageName: options[GoldensRunner.argDockerImageName] ?? GoldensRunner.defaultDockerImageName,
     packageDirectory: packageDirectory,
     pathToProjectRoot: options[GoldensRunner.argPathToProjectRoot] ?? GoldensRunner.defaultPathToProjectRoot,
@@ -175,7 +174,7 @@ String? _parseOption(List<String> arguments, String name) {
 
 class GoldenRequest {
   const GoldenRequest({
-    required this.dockerFilePath,
+    this.dockerFilePath,
     required this.dockerImageName,
     required this.packageDirectory,
     required this.pathToProjectRoot,
@@ -183,11 +182,14 @@ class GoldenRequest {
     required this.testCommandArguments,
   });
 
-  /// The path from the CLI command is running, to the Dockerfile that says
+  /// The path from where the CLI command is running, to the Dockerfile that says
   /// how to build the image.
   ///
+  /// When `null`, golden_runner uses its own version of a Dockerfile, which includes
+  /// a configuration that should suit typical users.
+  ///
   /// The file path must include the name of the file, e.g., `golden_tester.Dockerfile`.
-  final String dockerFilePath;
+  final String? dockerFilePath;
 
   /// The name to give the Docker image when its created.
   ///

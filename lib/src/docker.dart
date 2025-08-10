@@ -48,7 +48,7 @@ class Docker {
   /// This method calls out to Docker, which must be installed and running on the host
   /// operating system.
   Future<ExitCode> buildImage({
-    required String dockerFilePath,
+    String? dockerFilePath,
     required String imageName,
     String? workingDirectory,
     bool throwOnError = false,
@@ -61,14 +61,26 @@ class Docker {
       'docker',
       [
         'build',
-        '-f',
-        dockerFilePath, // e.g., "golden-tester.Dockerfile"
         '-t',
         imageName, // e.g., "golden-tester"
+        if (dockerFilePath != null) ...[
+          '-f',
+          dockerFilePath, // e.g., "golden-tester.Dockerfile"
+        ] else ...[
+          // Send the Dockerfile through STDIN instead of from a file.
+          '-f',
+          '-',
+        ],
         '.',
       ],
       workingDirectory: workingDirectory,
     );
+
+    if (dockerFilePath == null) {
+      // Send the Dockerfile through STDIN instead of from a file.
+      process.stdin.write(_createVirtualDockerfile());
+      await process.stdin.close();
+    }
 
     await stdout.addStream(process.stdout);
     await stderr.addStream(process.stderr);
@@ -82,6 +94,35 @@ class Docker {
     }
 
     return exitCode;
+  }
+
+  String _createVirtualDockerfile() {
+    return r'''
+FROM ubuntu:latest
+
+ENV FLUTTER_HOME=${HOME}/sdks/flutter 
+ENV PATH ${PATH}:${FLUTTER_HOME}/bin:${FLUTTER_HOME}/bin/cache/dart-sdk/bin
+
+USER root
+
+RUN apt update
+
+RUN apt install -y git curl unzip
+
+# Print the Ubuntu version. Useful when there are failing tests.
+RUN cat /etc/lsb-release
+
+# Invalidate the cache when flutter pushes a new commit.
+ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable
+
+RUN git clone https://github.com/flutter/flutter.git ${FLUTTER_HOME}
+
+RUN flutter doctor
+
+# Copy the whole repo, which makes it possible for one package to reference
+# other packages within a mono-repo.
+COPY ./ /golden_tester
+''';
   }
 
   /// Deletes the Docker image with the given [imageName].
@@ -208,7 +249,7 @@ class FakeDocker implements Docker {
 
   @override
   Future<ExitCode> buildImage({
-    required String dockerFilePath,
+    String? dockerFilePath,
     required String imageName,
     String? workingDirectory,
     bool throwOnError = false,
@@ -217,6 +258,11 @@ class FakeDocker implements Docker {
     _incrementCallCount("buildImage");
     _images.add(imageName);
     return 0;
+  }
+
+  @override
+  String _createVirtualDockerfile() {
+    throw UnimplementedError();
   }
 
   @override

@@ -39,8 +39,11 @@ Activate from Pub:
 
 Activate from local source:
 
+    # From outside the `golden_runner` directory:
     dart pub global activate --source path ./golden_runner
 
+    # From within the `golden_runner` directory:
+    dart pub global activate --source path .
 
 ## Run golden tests:
 The `goldens` command must be run from the directory of the app/package under test.
@@ -84,6 +87,46 @@ run the image build directly.
 Run the following command from your project directory:
 
     docker build -f [path_to]/golden_tester.Dockerfile -t golden_tester .
+
+Note: The `golden_runner` package internally sends a Dockerfile to Docker over stdin. When running the
+Docker build directly, you'll need to provide that Dockerfile, either as a file, or through stdin. Here's
+a Dockerfile that should work for you:
+
+```
+FROM ubuntu:latest
+
+ENV FLUTTER_HOME=${HOME}/sdks/flutter 
+ENV PATH ${PATH}:${FLUTTER_HOME}/bin:${FLUTTER_HOME}/bin/cache/dart-sdk/bin
+
+USER root
+
+RUN apt update
+
+RUN apt install -y git curl unzip
+
+# Print the Ubuntu version. Useful when there are failing tests.
+RUN cat /etc/lsb-release
+
+# Invalidate the cache when flutter pushes a new commit.
+ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable
+
+RUN git clone https://github.com/flutter/flutter.git ${FLUTTER_HOME}
+
+RUN flutter doctor
+
+# Copy the whole repo, which makes it possible for one package to reference
+# other packages within a mono-repo.
+COPY ./ /golden_tester
+```
+
+This Dockerfile might fall out of date from time to time, if we change the version of it
+inside the package. If it ever looks like the above Dockerfile is the problem, check inside
+the package for the version that's used by default, and use that instead.
+
+You can either save the above Dockerfile to a file, or you can paste it via stdin, beginning
+with the following command:
+
+    docker build -f - -t golden_tester .
 
 One theory about this hanging command problem is that the process to download the Flutter engine
 is taking a very long time. But we're not sure.
