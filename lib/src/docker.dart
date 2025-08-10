@@ -51,6 +51,7 @@ class Docker {
     String? dockerFilePath,
     required String imageName,
     String? workingDirectory,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     GrLog.docker.info(
@@ -61,6 +62,8 @@ class Docker {
       'docker',
       [
         'build',
+        // Note: We can't use "interactive" mode because we (may) need to send the Dockerfile
+        // through stdin at the end of the Docker command.
         '-t',
         imageName, // e.g., "golden-tester"
         if (dockerFilePath != null) ...[
@@ -71,6 +74,8 @@ class Docker {
           '-f',
           '-',
         ],
+        if (verbosity != DockerVerbosity.standard) //
+          '-q',
         '.',
       ],
       workingDirectory: workingDirectory,
@@ -82,8 +87,19 @@ class Docker {
       await process.stdin.close();
     }
 
-    await stdout.addStream(process.stdout);
-    await stderr.addStream(process.stderr);
+    if (verbosity == DockerVerbosity.errorOnly || verbosity == DockerVerbosity.none) {
+      // Ignore all stdout.
+      await process.stdout.drain();
+    } else {
+      await stdout.addStream(process.stdout);
+    }
+
+    if (verbosity == DockerVerbosity.none) {
+      // Ignore all stderr.
+      await process.stderr.drain();
+    } else {
+      await stderr.addStream(process.stderr);
+    }
 
     final exitCode = await process.exitCode;
 
@@ -131,6 +147,7 @@ COPY ./ /golden_tester
   /// operating system.
   Future<ExitCode> deleteImage({
     required String imageName,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     final process = await Process.start(
@@ -142,8 +159,20 @@ COPY ./ /golden_tester
       ],
     );
 
-    await stdout.addStream(process.stdout);
-    await stderr.addStream(process.stderr);
+    if (verbosity == DockerVerbosity.standard) {
+      await stdout.addStream(process.stdout);
+    } else {
+      // Ignore stdout. We ignore stdout, even in "quiet" mode, because the
+      // "docker image rm" command doesn't support any verbosity control, itself.
+      await process.stdout.drain();
+    }
+
+    if (verbosity != DockerVerbosity.none) {
+      await stderr.addStream(process.stderr);
+    } else {
+      // Ignore stderr.
+      await process.stderr.drain();
+    }
 
     final exitCode = await process.exitCode;
 
@@ -170,6 +199,7 @@ COPY ./ /golden_tester
     Set<String> mountPaths = const {},
     String? workingDirectory,
     required List<String> commandToRun,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     GrLog.docker.info("Running Docker container: $imageName");
@@ -181,6 +211,12 @@ COPY ./ /golden_tester
       'run',
       // Remove the container when it exits.
       '--rm',
+      // Run as an interactive (i) terminal (t). Running as a terminal retains color
+      // formatting. Making it interactive allows lines to be replaced so that a single test
+      // doesn't produce dozens of the same line of output over time.
+      '-it',
+      if (verbosity != DockerVerbosity.standard) //
+        '--log-driver=none',
       // If desired, mount some paths from the host machine into the container to share
       // files.
       for (final path in mountPaths) ...[
@@ -201,10 +237,11 @@ COPY ./ /golden_tester
     final process = await Process.start(
       'docker',
       args,
+      // Must inherit stdio to be able to configure the command as an interactive terminal.
+      // If we pipe streams instead of inheriting, we can still operate as a terminal (-t),
+      // but we get an error when trying interactive (-i).
+      mode: ProcessStartMode.inheritStdio,
     );
-
-    await stdout.addStream(process.stdout);
-    await stderr.addStream(process.stderr);
 
     final exitCode = await process.exitCode;
 
@@ -252,9 +289,9 @@ class FakeDocker implements Docker {
     String? dockerFilePath,
     required String imageName,
     String? workingDirectory,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
-    print("Running buildImage() on fake");
     _incrementCallCount("buildImage");
     _images.add(imageName);
     return 0;
@@ -266,7 +303,11 @@ class FakeDocker implements Docker {
   }
 
   @override
-  Future<ExitCode> deleteImage({required String imageName, bool throwOnError = false}) async {
+  Future<ExitCode> deleteImage({
+    required String imageName,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
+    bool throwOnError = false,
+  }) async {
     _incrementCallCount("deleteImage");
     _images.remove(imageName);
     return 0;
@@ -278,6 +319,7 @@ class FakeDocker implements Docker {
     Set<String> mountPaths = const {},
     String? workingDirectory,
     required List<String> commandToRun,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     _incrementCallCount("runContainer");
@@ -287,4 +329,26 @@ class FakeDocker implements Docker {
   void _incrementCallCount(String methodName) {
     _callCounts[methodName] = (_callCounts[methodName] ?? 0) + 1;
   }
+}
+
+enum DockerVerbosity {
+  standard("standard"),
+  quiet("quiet"),
+  errorOnly("error"),
+  none("none");
+
+  static DockerVerbosity parse(String name) {
+    final lowerCaseName = name.toLowerCase();
+    for (final value in values) {
+      if (value.name == lowerCaseName) {
+        return value;
+      }
+    }
+
+    throw Exception("Unknown DockerVerbosity: $name");
+  }
+
+  const DockerVerbosity(this.name);
+
+  final String name;
 }
