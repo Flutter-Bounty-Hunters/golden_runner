@@ -11,6 +11,7 @@ class GoldensRunner {
   static const argPathToProjectRoot = "--path-to-project-root";
   static const argVerbose = "--verbose";
   static const argVerboseShort = "-v";
+  static const argDockerVerbosity = "--docker-verbosity";
 
   static const defaultDockerImageName = "golden_tester";
   static const defaultPathToProjectRoot = ".";
@@ -45,6 +46,7 @@ Future<void> _runGoldenCommand(List<String> arguments, {bool updateGoldens = fal
     dockerFilePath: goldenRequest.dockerFilePath,
     imageName: goldenRequest.dockerImageName,
     workingDirectory: goldenRequest.pathToProjectRoot,
+    verbosity: goldenRequest.dockerVerbosity,
   );
 
   // Runs the Docker container, which then runs the Flutter test command internally.
@@ -69,10 +71,15 @@ Future<void> _runGoldenCommand(List<String> arguments, {bool updateGoldens = fal
         '--update-goldens',
       ...goldenRequest.testCommandArguments,
     ],
+
+    verbosity: goldenRequest.dockerVerbosity,
   );
 
   // After running the tests, we don't need the image anymore. Remove it.
-  await Docker.instance.deleteImage(imageName: goldenRequest.dockerImageName);
+  await Docker.instance.deleteImage(
+    imageName: goldenRequest.dockerImageName,
+    verbosity: goldenRequest.dockerVerbosity,
+  );
 }
 
 @visibleForTesting
@@ -82,6 +89,7 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
     GoldensRunner.argDockerFilePath,
     GoldensRunner.argDockerImageName,
     GoldensRunner.argPathToProjectRoot,
+    GoldensRunner.argDockerVerbosity,
   ];
 
   final options = <String, String?>{};
@@ -135,6 +143,9 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
     pathToProjectRoot: options[GoldensRunner.argPathToProjectRoot] ?? GoldensRunner.defaultPathToProjectRoot,
     testBaseDirectory: testDirectoryPath,
     testCommandArguments: testCommandArguments,
+    dockerVerbosity: options[GoldensRunner.argDockerVerbosity] != null
+        ? DockerVerbosity.parse(options[GoldensRunner.argDockerVerbosity]!)
+        : DockerVerbosity.errorOnly,
   );
 }
 
@@ -180,6 +191,7 @@ class GoldenRequest {
     required this.pathToProjectRoot,
     required this.testBaseDirectory,
     required this.testCommandArguments,
+    required this.dockerVerbosity,
   });
 
   /// The path from where the CLI command is running, to the Dockerfile that says
@@ -216,4 +228,13 @@ class GoldenRequest {
 
   /// Arguments that are passed to Flutter's `test` command.
   final List<String> testCommandArguments;
+
+  /// The relative type/volume of logs that should be forwarded from Docker
+  /// to the CLI.
+  ///
+  /// Note: Docker has poor consistency with logging/verbosity configurations.
+  /// There may be Docker commands where this verbosity cannot be strictly honored.
+  /// However, this package does its best to get as close to the requested verbosity
+  /// as possible.
+  final DockerVerbosity dockerVerbosity;
 }
