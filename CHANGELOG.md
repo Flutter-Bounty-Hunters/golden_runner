@@ -1,3 +1,7 @@
+## 0.2.1
+### April 26, 2026
+ * Fix: Listen to Docker stdout and stderr concurrently to prevent deadlock.
+
 ## 0.2.0
 ### Aug 11, 2025
  * A Dockerfile is no longer required - a default Dockerfile is sent to Docker by this package.
