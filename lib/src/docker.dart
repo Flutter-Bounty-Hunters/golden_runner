@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:golden_runner/golden_runner.dart';
@@ -80,28 +81,25 @@ class Docker {
       ],
       workingDirectory: workingDirectory,
     );
+    GrLog.docker.finer("Docker process started");
 
     if (dockerFilePath == null) {
       // Send the Dockerfile through STDIN instead of from a file.
       process.stdin.write(_createVirtualDockerfile());
       await process.stdin.close();
+      GrLog.docker.finer("Virtual Dockerfile sent to Docker process");
     }
 
-    if (verbosity == DockerVerbosity.errorOnly || verbosity == DockerVerbosity.none) {
-      // Ignore all stdout.
-      await process.stdout.drain();
-    } else {
-      await stdout.addStream(process.stdout);
-    }
+    // Handle the Process's stdout and stderr concurrently to prevent a possible deadlock.
+    await Future.wait([
+      process.stdout.transform(utf8.decoder).forEach(
+          verbosity != DockerVerbosity.errorOnly && verbosity != DockerVerbosity.none ? _sendToStdOut : _noOpOutput),
+      process.stderr.transform(utf8.decoder).forEach(verbosity != DockerVerbosity.none ? _sendToStdErr : _noOpOutput),
+    ]);
 
-    if (verbosity == DockerVerbosity.none) {
-      // Ignore all stderr.
-      await process.stderr.drain();
-    } else {
-      await stderr.addStream(process.stderr);
-    }
-
+    GrLog.docker.finer("Waiting for Docker process to finish");
     final exitCode = await process.exitCode;
+    GrLog.docker.finer("Docker process finished - exist code: $exitCode");
 
     if (exitCode != 0 && throwOnError) {
       throw Exception(
@@ -253,6 +251,18 @@ COPY ./ /golden_tester
 
     return exitCode;
   }
+}
+
+void _sendToStdOut(String output) {
+  stdout.write(output);
+}
+
+void _sendToStdErr(String output) {
+  stderr.write(output);
+}
+
+void _noOpOutput(String output) {
+  // No-op.
 }
 
 typedef ExitCode = int;
