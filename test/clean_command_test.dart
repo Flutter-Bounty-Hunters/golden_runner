@@ -36,8 +36,7 @@ void main() {
         () => parseCleanCommandArguments(["--plain-name", "my test"]),
         throwsA(
           predicate(
-            (Object error) =>
-                error.toString().contains("Unknown clean option: --plain-name"),
+            (Object error) => error.toString().contains("Unknown clean option: --plain-name"),
           ),
         ),
       );
@@ -315,8 +314,7 @@ void main() {
           ),
           throwsA(
             predicate(
-              (Object error) =>
-                  error.toString().contains("Clean target does not exist"),
+              (Object error) => error.toString().contains("Clean target does not exist"),
             ),
           ),
         );
