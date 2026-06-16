@@ -7,8 +7,7 @@ import 'package:golden_runner/golden_runner.dart';
 /// line with the `goldens` keyword.
 Future<void> main(List<String> arguments) async {
   final command = arguments.isEmpty ? null : arguments.first;
-  if (command != "clean" &&
-      (arguments.contains("--verbose") || arguments.contains("-v"))) {
+  if (command != "clean" && (arguments.contains("--verbose") || arguments.contains("-v"))) {
     GrLog.initAllLogs();
   }
 
