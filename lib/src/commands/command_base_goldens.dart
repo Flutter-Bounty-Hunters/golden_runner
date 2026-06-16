@@ -1,9 +1,7 @@
 import 'dart:io';
 
 import 'package:golden_runner/golden_runner.dart';
-import 'package:golden_runner/src/goldens_runner.dart';
-import 'package:golden_runner/src/infrastructure/arguments.dart';
-import 'package:golden_runner/src/infrastructure/docker/docker_golden_container.dart';
+import 'package:golden_runner/src/commands/command_docker_container.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 
@@ -47,14 +45,17 @@ abstract class GoldensCommand extends DockerContainerCommand {
   List<String> get command;
 
   @visibleForTesting
+  @protected
   String get packageDirectory => _packageDirectory!;
   String? _packageDirectory;
 
   @visibleForTesting
+  @protected
   String get testBaseDirectory => _testBaseDirectory!;
   String? _testBaseDirectory;
 
   @visibleForTesting
+  @protected
   List<String> get testCommandArguments => _testCommandArguments!;
   List<String>? _testCommandArguments;
 

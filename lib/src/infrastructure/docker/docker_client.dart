@@ -3,6 +3,120 @@ import 'dart:io';
 
 import 'package:golden_runner/golden_runner.dart';
 
+/// Client to build a Docker Image and then run it in a Docker Container.
+class DockerGoldenContainer {
+  const DockerGoldenContainer();
+
+  Future<void> buildAndRun(RunDockerContainerRequest request) async {
+    // Builds the image used to run the container. We can build the image
+    // even if it already exists. Docker will cache each step used in the
+    // Dockerfile, so subsequent builds will be faster.
+    await Docker.instance.buildImage(
+      dockerFilePath: request.dockerFilePath,
+      imageName: request.dockerImageName,
+      pathToProjectRoot: request.pathToProjectRoot,
+      verbosity: request.dockerVerbosity,
+    );
+
+    // Runs the Docker container, which then runs the Flutter test command internally.
+    await Docker.instance.runContainer(
+      imageName: request.dockerImageName,
+
+      // (Maybe) mounted part of the host machine with the Container so the Container can alter
+      // the host machine.
+      mountPaths: request.mountPaths,
+
+      // Within the container, set the working directory to the place where the image
+      // copied the project into the container.
+      workingDirectory: request.containerWorkingDirectory,
+
+      // The CLI command that runs in the Container. This where all the interesting stuff happens.
+      commandToRun: request.command,
+
+      verbosity: request.dockerVerbosity,
+    );
+
+    // After running, we don't need the image anymore. Remove it.
+    await Docker.instance.deleteImage(
+      imageName: request.dockerImageName,
+      verbosity: request.dockerVerbosity,
+    );
+  }
+}
+
+class RunDockerContainerRequest {
+  const RunDockerContainerRequest({
+    required this.dockerFilePath,
+    required this.dockerImageName,
+    required this.dockerVerbosity,
+    this.mountPaths = const {},
+    this.pathToProjectRoot = ".",
+    this.containerWorkingDirectory = ".",
+    required this.command,
+  });
+
+  /// The path from where the CLI command is running, to the Dockerfile that says
+  /// how to build the image.
+  ///
+  /// When `null`, golden_runner uses its own version of a Dockerfile, which includes
+  /// a configuration that should suit typical users.
+  ///
+  /// The file path must include the name of the file, e.g., `golden_tester.Dockerfile`.
+  final String dockerFilePath;
+
+  /// The name to give the Docker image when its created.
+  ///
+  /// This is the name that will identify the Docker image when using an app like
+  /// Docker Desktop. The value can be anything.
+  final String dockerImageName;
+
+  /// The relative type/volume of logs that should be forwarded from Docker
+  /// to the CLI.
+  ///
+  /// Note: Docker has poor consistency with logging/verbosity configurations.
+  /// There may be Docker commands where this verbosity cannot be strictly honored.
+  /// However, this package does its best to get as close to the requested verbosity
+  /// as possible.
+  final DockerVerbosity dockerVerbosity;
+
+  /// Locations on the host machine where the Container should be able to read/write.
+  final Set<String> mountPaths;
+
+  /// The path from where this command is executed, to the root of the project that copied into
+  /// the image.
+  ///
+  /// Typically this path is just ".", but there may be instances where this command is run from a directory
+  /// other than the directory that should be copied into the image. For example, you run this command from
+  /// within a single package in a mono-repo, but the Docker image needs to copy the entire mono-repo so that
+  /// it can resolve dependencies. In that case you would pass "..".
+  final String pathToProjectRoot;
+
+  /// The working directory within the running container where the [command] will be run.
+  ///
+  /// Example: `"test_goldens/super_editor/"
+  final String containerWorkingDirectory;
+
+  /// Arguments for a CLI command to run within the container, e.g., `["flutter", "test"]`.
+  final List<String> command;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RunDockerContainerRequest &&
+          runtimeType == other.runtimeType &&
+          dockerFilePath == other.dockerFilePath &&
+          dockerImageName == other.dockerImageName &&
+          dockerVerbosity == other.dockerVerbosity &&
+          mountPaths == other.mountPaths &&
+          pathToProjectRoot == other.pathToProjectRoot &&
+          containerWorkingDirectory == other.containerWorkingDirectory &&
+          command == other.command;
+
+  @override
+  int get hashCode => Object.hash(dockerFilePath, dockerImageName, dockerVerbosity, mountPaths, pathToProjectRoot,
+      containerWorkingDirectory, command);
+}
+
 /// A Dart client that talks to Docker on the host machine.
 class Docker {
   static Docker? _instance;
@@ -365,7 +479,7 @@ enum DockerVerbosity {
     }
 
     try {
-      return parse(name!);
+      return parse(name);
     } catch (exception) {
       return null;
     }

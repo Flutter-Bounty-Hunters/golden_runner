@@ -5,5 +5,4 @@ export 'src/commands/test.dart';
 export 'src/commands/update.dart';
 export 'src/infrastructure/arguments.dart';
 export 'src/infrastructure/docker/docker_client.dart';
-export 'src/infrastructure/docker/docker_golden_container.dart';
 export 'src/infrastructure/logging.dart';
