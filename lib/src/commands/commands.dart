@@ -41,8 +41,10 @@ class GoldensRunner {
   }
 }
 
-Future<void> _runGoldenCommand(List<String> arguments,
-    {bool updateGoldens = false}) async {
+Future<void> _runGoldenCommand(
+  List<String> arguments, {
+  bool updateGoldens = false,
+}) async {
   final goldenRequest = parseTestCommandArguments(arguments);
 
   // Builds the image used to run the container. We can build the image
@@ -105,9 +107,7 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
   GrLog.commands.fine("Parsed options: $options");
 
   var testDirectoryPath = GoldensRunner.defaultTestDirectoryPath;
-  final testDirectoryOrFile = arguments.isEmpty ||
-          arguments.last.startsWith("--") ||
-          arguments.last.startsWith("-") //
+  final testDirectoryOrFile = arguments.isEmpty || arguments.last.startsWith("--") || arguments.last.startsWith("-") //
       ? null
       : arguments.last;
   if (testDirectoryOrFile != null) {
@@ -120,8 +120,7 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
         // Use the given path, minus the file name and extension.
         testDirectoryPath = testDirectoryOrFile.substring(
           0,
-          testDirectoryOrFile.length -
-              path.basename(testDirectoryOrFile).length,
+          testDirectoryOrFile.length - path.basename(testDirectoryOrFile).length,
         );
       }
     }
@@ -147,11 +146,9 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
 
   return GoldenRequest(
     dockerFilePath: options[GoldensRunner.argDockerFilePath],
-    dockerImageName: options[GoldensRunner.argDockerImageName] ??
-        GoldensRunner.defaultDockerImageName,
+    dockerImageName: options[GoldensRunner.argDockerImageName] ?? GoldensRunner.defaultDockerImageName,
     packageDirectory: packageDirectory,
-    pathToProjectRoot: options[GoldensRunner.argPathToProjectRoot] ??
-        GoldensRunner.defaultPathToProjectRoot,
+    pathToProjectRoot: options[GoldensRunner.argPathToProjectRoot] ?? GoldensRunner.defaultPathToProjectRoot,
     testBaseDirectory: testDirectoryPath,
     testCommandArguments: testCommandArguments,
     dockerVerbosity: options[GoldensRunner.argDockerVerbosity] != null
