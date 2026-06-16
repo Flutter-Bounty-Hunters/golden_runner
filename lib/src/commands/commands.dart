@@ -1,6 +1,8 @@
 import 'dart:io';
 
-import 'package:golden_runner/golden_runner.dart';
+import 'package:golden_runner/src/commands/clean.dart';
+import 'package:golden_runner/src/docker.dart';
+import 'package:golden_runner/src/logging.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 
@@ -30,13 +32,19 @@ class GoldensRunner {
     } else if (arguments.first == "update") {
       GrLog.commands.fine("Updating goldens");
       await _runGoldenCommand(arguments.sublist(1), updateGoldens: true);
+    } else if (arguments.first == "clean") {
+      GrLog.commands.fine("Cleaning golden failure artifacts");
+      await cleanGoldenFailures(arguments.sublist(1));
     } else {
       throw Exception("Unknown command: ${arguments.first}");
     }
   }
 }
 
-Future<void> _runGoldenCommand(List<String> arguments, {bool updateGoldens = false}) async {
+Future<void> _runGoldenCommand(
+  List<String> arguments, {
+  bool updateGoldens = false,
+}) async {
   final goldenRequest = parseTestCommandArguments(arguments);
 
   // Builds the image used to run the container. We can build the image

@@ -13,6 +13,8 @@ with the following...
 
     goldens update
 
+    goldens clean
+
 The purpose of the `goldens` command is to run your golden tests in an environment that can
 reasonably be replicated between local developers and CI systems. Generally speaking, the
 only environment that can be freely configured and simulated across every other platform is
@@ -78,6 +80,35 @@ goldens update --plain-name="something"
 # Update select goldens in a directory.
 goldens update --plain-name "something" test_goldens/my_dir
 ```
+
+## Clean golden failure artifacts:
+The `goldens` command must be run from the directory of the app/package under test.
+
+By default, `goldens clean` deletes directories named `failures` under `test_goldens`.
+
+```
+# Delete failure directories under test_goldens.
+goldens clean
+
+# Delete failure directories under a specific directory.
+goldens clean test_goldens/my_dir
+
+# Preview what would be deleted.
+goldens clean --dry-run
+
+# Also delete loose Flutter golden failure PNG files.
+goldens clean --loose-files
+
+# Print every deleted directory and file.
+goldens clean --verbose
+
+# Print nothing.
+goldens clean --silent
+```
+
+Loose failure files are deleted only when `--loose-files` is passed. The command uses a conservative
+name allowlist: `*.masterImage.png`, `*.testImage.png`, `*.isolatedDiff.png`, `*.maskedDiff.png`,
+and `failure_*.png`.
 
 ## A Hanging Command
 Sometimes the golden runner hangs at "building image". It's not clear why this happens, or what
