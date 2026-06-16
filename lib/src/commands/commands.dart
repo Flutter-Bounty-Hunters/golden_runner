@@ -1,6 +1,8 @@
 import 'dart:io';
 
-import 'package:golden_runner/golden_runner.dart';
+import 'package:golden_runner/src/commands/clean.dart';
+import 'package:golden_runner/src/docker.dart';
+import 'package:golden_runner/src/logging.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 
@@ -32,16 +34,15 @@ class GoldensRunner {
       await _runGoldenCommand(arguments.sublist(1), updateGoldens: true);
     } else if (arguments.first == "clean") {
       GrLog.commands.fine("Cleaning golden failure artifacts");
-      await cleanGoldenFailures(
-        parseCleanCommandArguments(arguments.sublist(1)),
-      );
+      await cleanGoldenFailures(arguments.sublist(1));
     } else {
       throw Exception("Unknown command: ${arguments.first}");
     }
   }
 }
 
-Future<void> _runGoldenCommand(List<String> arguments, {bool updateGoldens = false}) async {
+Future<void> _runGoldenCommand(List<String> arguments,
+    {bool updateGoldens = false}) async {
   final goldenRequest = parseTestCommandArguments(arguments);
 
   // Builds the image used to run the container. We can build the image
@@ -104,7 +105,9 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
   GrLog.commands.fine("Parsed options: $options");
 
   var testDirectoryPath = GoldensRunner.defaultTestDirectoryPath;
-  final testDirectoryOrFile = arguments.isEmpty || arguments.last.startsWith("--") || arguments.last.startsWith("-") //
+  final testDirectoryOrFile = arguments.isEmpty ||
+          arguments.last.startsWith("--") ||
+          arguments.last.startsWith("-") //
       ? null
       : arguments.last;
   if (testDirectoryOrFile != null) {
@@ -117,7 +120,8 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
         // Use the given path, minus the file name and extension.
         testDirectoryPath = testDirectoryOrFile.substring(
           0,
-          testDirectoryOrFile.length - path.basename(testDirectoryOrFile).length,
+          testDirectoryOrFile.length -
+              path.basename(testDirectoryOrFile).length,
         );
       }
     }
@@ -143,9 +147,11 @@ GoldenRequest parseTestCommandArguments(List<String> arguments) {
 
   return GoldenRequest(
     dockerFilePath: options[GoldensRunner.argDockerFilePath],
-    dockerImageName: options[GoldensRunner.argDockerImageName] ?? GoldensRunner.defaultDockerImageName,
+    dockerImageName: options[GoldensRunner.argDockerImageName] ??
+        GoldensRunner.defaultDockerImageName,
     packageDirectory: packageDirectory,
-    pathToProjectRoot: options[GoldensRunner.argPathToProjectRoot] ?? GoldensRunner.defaultPathToProjectRoot,
+    pathToProjectRoot: options[GoldensRunner.argPathToProjectRoot] ??
+        GoldensRunner.defaultPathToProjectRoot,
     testBaseDirectory: testDirectoryPath,
     testCommandArguments: testCommandArguments,
     dockerVerbosity: options[GoldensRunner.argDockerVerbosity] != null
@@ -186,258 +192,6 @@ String? _parseOption(List<String> arguments, String name) {
   }
 
   return value;
-}
-
-@visibleForTesting
-CleanRequest parseCleanCommandArguments(List<String> arguments) {
-  GrLog.commands.fine("Parsing clean command arguments: $arguments");
-
-  var includeLooseFiles = false;
-  var dryRun = false;
-  var silent = false;
-  var verbose = false;
-  final positionalArguments = <String>[];
-
-  for (final argument in arguments) {
-    switch (argument) {
-      case "--loose-files":
-        includeLooseFiles = true;
-      case "--dry-run":
-        dryRun = true;
-      case "--silent":
-        silent = true;
-      case GoldensRunner.argVerbose:
-      case GoldensRunner.argVerboseShort:
-        verbose = true;
-      default:
-        if (argument.startsWith("-")) {
-          throw Exception("Unknown clean option: $argument");
-        }
-
-        positionalArguments.add(argument);
-    }
-  }
-
-  if (positionalArguments.length > 1) {
-    throw Exception(
-      "Expected at most one clean target path, but found: ${positionalArguments.join(", ")}",
-    );
-  }
-
-  if (silent && verbose) {
-    throw Exception("Cannot use --silent with --verbose.");
-  }
-
-  if (silent && dryRun) {
-    throw Exception(
-      "Cannot use --silent with --dry-run. Dry run is intended as a print-only behavior.",
-    );
-  }
-
-  return CleanRequest(
-    targetPath: positionalArguments.isEmpty ? GoldensRunner.defaultTestDirectoryPath : positionalArguments.single,
-    includeLooseFiles: includeLooseFiles,
-    dryRun: dryRun,
-    silent: silent,
-    verbose: verbose,
-  );
-}
-
-@visibleForTesting
-Future<CleanResult> cleanGoldenFailures(
-  CleanRequest request, {
-  void Function(String line)? printLine,
-}) async {
-  printLine ??= (line) => stdout.writeln(line);
-
-  final targetType = FileSystemEntity.typeSync(
-    request.targetPath,
-    followLinks: false,
-  );
-  if (targetType == FileSystemEntityType.notFound) {
-    throw Exception("Clean target does not exist: ${request.targetPath}");
-  }
-
-  if (targetType == FileSystemEntityType.link) {
-    throw Exception("Clean target cannot be a symlink: ${request.targetPath}");
-  }
-
-  final targetDirectory = targetType == FileSystemEntityType.file //
-      ? Directory(path.dirname(request.targetPath))
-      : Directory(request.targetPath);
-
-  final failureDirectories = <Directory>[
-    if (path.basename(targetDirectory.path) == "failures") //
-      targetDirectory,
-  ];
-  final looseFailureFiles = <File>[];
-
-  await for (final entity in targetDirectory.list(
-    recursive: true,
-    followLinks: false,
-  )) {
-    final entityType = await FileSystemEntity.type(
-      entity.path,
-      followLinks: false,
-    );
-    if (entityType == FileSystemEntityType.directory && path.basename(entity.path) == "failures") {
-      failureDirectories.add(Directory(entity.path));
-      continue;
-    }
-
-    if (request.includeLooseFiles && entityType == FileSystemEntityType.file && _isLooseFailureFile(entity.path)) {
-      looseFailureFiles.add(File(entity.path));
-    }
-  }
-
-  final topLevelFailureDirectories = _topLevelFailureDirectories(
-    failureDirectories,
-  );
-  final looseFilesOutsideFailureDirectories = looseFailureFiles
-      .where(
-        (file) => !_isWithinAnyDirectory(
-          file.path,
-          topLevelFailureDirectories.map((directory) => directory.path),
-        ),
-      )
-      .toList();
-
-  if (request.verbose && request.dryRun) {
-    for (final directory in topLevelFailureDirectories) {
-      printLine(
-        "Would delete directory: ${path.relative(directory.path)}",
-      );
-    }
-
-    for (final file in looseFilesOutsideFailureDirectories) {
-      printLine("Would delete file: ${path.relative(file.path)}");
-    }
-  }
-
-  if (!request.dryRun) {
-    for (final directory in topLevelFailureDirectories) {
-      await directory.delete(recursive: true);
-      if (request.verbose) {
-        printLine("Deleted directory: ${path.relative(directory.path)}");
-      }
-    }
-
-    for (final file in looseFilesOutsideFailureDirectories) {
-      await file.delete();
-      if (request.verbose) {
-        printLine("Deleted file: ${path.relative(file.path)}");
-      }
-    }
-  }
-
-  final result = CleanResult(
-    deletedFailureDirectoryCount: topLevelFailureDirectories.length,
-    deletedLooseFailureFileCount: looseFilesOutsideFailureDirectories.length,
-    dryRun: request.dryRun,
-  );
-
-  if (!request.silent) {
-    printLine(result.summary);
-  }
-
-  return result;
-}
-
-bool _isLooseFailureFile(String filePath) {
-  final filename = path.basename(filePath);
-  return filename.endsWith(".masterImage.png") ||
-      filename.endsWith(".testImage.png") ||
-      filename.endsWith(".isolatedDiff.png") ||
-      filename.endsWith(".maskedDiff.png") ||
-      (filename.startsWith("failure_") && filename.endsWith(".png"));
-}
-
-List<Directory> _topLevelFailureDirectories(List<Directory> directories) {
-  final sortedDirectories = [...directories]..sort(
-      (a, b) => path.split(a.path).length.compareTo(path.split(b.path).length),
-    );
-
-  final topLevelDirectories = <Directory>[];
-  for (final directory in sortedDirectories) {
-    if (!_isWithinAnyDirectory(
-      directory.path,
-      topLevelDirectories.map((directory) => directory.path),
-    )) {
-      topLevelDirectories.add(directory);
-    }
-  }
-
-  return topLevelDirectories;
-}
-
-bool _isWithinAnyDirectory(String childPath, Iterable<String> parentPaths) {
-  final canonicalChildPath = path.canonicalize(childPath);
-  for (final parentPath in parentPaths) {
-    final canonicalParentPath = path.canonicalize(parentPath);
-    if (path.equals(canonicalChildPath, canonicalParentPath)) {
-      continue;
-    }
-
-    if (path.isWithin(canonicalParentPath, canonicalChildPath)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-class CleanRequest {
-  const CleanRequest({
-    required this.targetPath,
-    required this.includeLooseFiles,
-    required this.dryRun,
-    required this.silent,
-    required this.verbose,
-  });
-
-  /// The file or directory that scopes the cleanup.
-  ///
-  /// Directory targets are searched directly. File targets scope cleanup to
-  /// the file's parent directory.
-  final String targetPath;
-
-  /// Whether to delete loose PNG files that match Flutter golden failure names.
-  final bool includeLooseFiles;
-
-  /// Whether to print what would be deleted without deleting anything.
-  final bool dryRun;
-
-  /// Whether to suppress command output.
-  final bool silent;
-
-  /// Whether to print each deleted path.
-  final bool verbose;
-}
-
-class CleanResult {
-  const CleanResult({
-    required this.deletedFailureDirectoryCount,
-    required this.deletedLooseFailureFileCount,
-    required this.dryRun,
-  });
-
-  final int deletedFailureDirectoryCount;
-  final int deletedLooseFailureFileCount;
-  final bool dryRun;
-
-  String get summary {
-    if (deletedFailureDirectoryCount == 0 && deletedLooseFailureFileCount == 0) {
-      return dryRun ? "No golden failure artifacts would be deleted." : "No golden failure artifacts found.";
-    }
-
-    final prefix = dryRun ? "Would delete" : "Deleted";
-    return "$prefix ${_pluralize(deletedFailureDirectoryCount, "failure directory", "failure directories")} "
-        "and ${_pluralize(deletedLooseFailureFileCount, "loose failure file", "loose failure files")}.";
-  }
-
-  String _pluralize(int count, String singular, String plural) {
-    return "$count ${count == 1 ? singular : plural}";
-  }
 }
 
 class GoldenRequest {
