@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:golden_runner/golden_runner.dart';
 import 'package:golden_runner/src/commands/command_docker_container.dart';
+import 'package:golden_runner/src/infrastructure/arguments.dart';
+import 'package:golden_runner/src/infrastructure/logging.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 
@@ -31,7 +32,6 @@ abstract class GoldensCommand extends DockerContainerCommand {
       };
 
   @override
-  @visibleForTesting
   String get pathToProjectRoot => _pathToProjectRoot!;
   String? _pathToProjectRoot;
 
@@ -44,22 +44,23 @@ abstract class GoldensCommand extends DockerContainerCommand {
   @override
   List<String> get command;
 
-  @visibleForTesting
   @protected
+  @visibleForTesting
   String get packageDirectory => _packageDirectory!;
   String? _packageDirectory;
 
-  @visibleForTesting
   @protected
+  @visibleForTesting
   String get testBaseDirectory => _testBaseDirectory!;
   String? _testBaseDirectory;
 
-  @visibleForTesting
   @protected
+  @visibleForTesting
   List<String> get testCommandArguments => _testCommandArguments!;
   List<String>? _testCommandArguments;
 
   @override
+  @mustCallSuper
   void parseArguments(List<String> arguments) {
     super.parseArguments(arguments);
 

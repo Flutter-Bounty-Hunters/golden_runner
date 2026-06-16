@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:golden_runner/golden_runner.dart';
+import 'package:collection/collection.dart';
+import 'package:golden_runner/src/infrastructure/logging.dart';
 
 /// Client to build a Docker Image and then run it in a Docker Container.
 class DockerGoldenContainer {
@@ -46,7 +47,7 @@ class DockerGoldenContainer {
 
 class RunDockerContainerRequest {
   const RunDockerContainerRequest({
-    required this.dockerFilePath,
+    this.dockerFilePath,
     required this.dockerImageName,
     required this.dockerVerbosity,
     this.mountPaths = const {},
@@ -62,7 +63,7 @@ class RunDockerContainerRequest {
   /// a configuration that should suit typical users.
   ///
   /// The file path must include the name of the file, e.g., `golden_tester.Dockerfile`.
-  final String dockerFilePath;
+  final String? dockerFilePath;
 
   /// The name to give the Docker image when its created.
   ///
@@ -107,14 +108,21 @@ class RunDockerContainerRequest {
           dockerFilePath == other.dockerFilePath &&
           dockerImageName == other.dockerImageName &&
           dockerVerbosity == other.dockerVerbosity &&
-          mountPaths == other.mountPaths &&
           pathToProjectRoot == other.pathToProjectRoot &&
           containerWorkingDirectory == other.containerWorkingDirectory &&
-          command == other.command;
+          const DeepCollectionEquality().equals(mountPaths, other.mountPaths) &&
+          const DeepCollectionEquality().equals(command, other.command);
 
   @override
-  int get hashCode => Object.hash(dockerFilePath, dockerImageName, dockerVerbosity, mountPaths, pathToProjectRoot,
-      containerWorkingDirectory, command);
+  int get hashCode => Object.hash(
+        dockerFilePath,
+        dockerImageName,
+        dockerVerbosity,
+        const DeepCollectionEquality().hash(mountPaths),
+        pathToProjectRoot,
+        containerWorkingDirectory,
+        const DeepCollectionEquality().hash(command),
+      );
 }
 
 /// A Dart client that talks to Docker on the host machine.
@@ -133,7 +141,7 @@ class Docker {
 
   /// Remove any previous [Docker] given to [useDocker] and return to the default instance,
   /// which means real interactions with the operating system's Docker.
-  static resetRocker() => _overrideInstance = null;
+  static resetDocker() => _overrideInstance = null;
 
   const Docker._();
 

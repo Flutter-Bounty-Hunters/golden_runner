@@ -35,7 +35,7 @@ Future<void> main(List<String> arguments) async {
 
     // Parse the incoming arguments.
     GrLog.commands.fine("Parsing command arguments");
-    command.parseArguments(arguments);
+    command.parseArguments(arguments.sublist(1));
 
     // Run the command, now that the arguments have been parsed.
     GrLog.commands.fine("Running the command");
