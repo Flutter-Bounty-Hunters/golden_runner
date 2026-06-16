@@ -1,6 +1,7 @@
 import 'dart:io';
 
-import 'package:golden_runner/src/logging.dart';
+import 'package:golden_runner/src/commands/command_base.dart';
+import 'package:golden_runner/src/infrastructure/logging.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 
@@ -19,18 +20,30 @@ import 'package:path/path.dart' as path;
 ///  - `--verbose`, `-v`: Prints every deleted directory and file.
 ///
 /// [commandOutput] is where command text output goes. Defaults to `stdout`.
-Future<_CleanResult> cleanGoldenFailures(
-  List<String> arguments, {
-  StringSink? commandOutput,
-}) async {
-  return _cleanGoldenFailures(
-    parseCleanCommandArguments(arguments),
-    commandOutput: commandOutput ?? stdout,
-  );
+class CleanCommand implements Command {
+  CleanCommand([this._commandOutput]);
+
+  final StringSink? _commandOutput;
+
+  CleanRequest get request => _request!;
+  CleanRequest? _request;
+
+  @override
+  void parseArguments(List<String> arguments) {
+    _request = parseCleanCommandArguments(arguments);
+  }
+
+  @override
+  Future<CleanResult> run() async {
+    return await _cleanGoldenFailures(
+      request,
+      commandOutput: _commandOutput ?? stdout,
+    );
+  }
 }
 
 @visibleForTesting
-_CleanRequest parseCleanCommandArguments(List<String> arguments) {
+CleanRequest parseCleanCommandArguments(List<String> arguments) {
   GrLog.commands.fine("Parsing clean command arguments: $arguments");
 
   var includeLooseFiles = false;
@@ -75,7 +88,7 @@ _CleanRequest parseCleanCommandArguments(List<String> arguments) {
     );
   }
 
-  return _CleanRequest(
+  return CleanRequest(
     targetPath: positionalArguments.isEmpty ? _defaultCleanTargetPath : positionalArguments.single,
     includeLooseFiles: includeLooseFiles,
     dryRun: dryRun,
@@ -88,8 +101,8 @@ const _defaultCleanTargetPath = "test_goldens";
 const _argVerbose = "--verbose";
 const _argVerboseShort = "-v";
 
-Future<_CleanResult> _cleanGoldenFailures(
-  _CleanRequest request, {
+Future<CleanResult> _cleanGoldenFailures(
+  CleanRequest request, {
   required StringSink commandOutput,
 }) async {
   final targetType = FileSystemEntity.typeSync(
@@ -174,7 +187,7 @@ Future<_CleanResult> _cleanGoldenFailures(
     }
   }
 
-  final result = _CleanResult(
+  final result = CleanResult(
     deletedFailureDirectoryCount: failureDirectoriesWithoutDuplicateSubDirectories.length,
     deletedLooseFailureFileCount: looseFilesOutsideFailureDirectories.length,
     dryRun: request.dryRun,
@@ -241,8 +254,9 @@ bool _isWithinAnyDirectory(String childPath, Iterable<String> parentPaths) {
   return false;
 }
 
-class _CleanRequest {
-  const _CleanRequest({
+@visibleForTesting
+class CleanRequest {
+  const CleanRequest({
     required this.targetPath,
     required this.includeLooseFiles,
     required this.dryRun,
@@ -269,8 +283,8 @@ class _CleanRequest {
   final bool verbose;
 }
 
-class _CleanResult {
-  const _CleanResult({
+class CleanResult {
+  const CleanResult({
     required this.deletedFailureDirectoryCount,
     required this.deletedLooseFailureFileCount,
     required this.dryRun,

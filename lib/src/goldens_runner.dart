@@ -1,16 +1,12 @@
-import 'dart:io';
+import 'package:golden_runner/src/commands/clean.dart';
+import 'package:golden_runner/src/commands/command_base.dart';
+import 'package:golden_runner/src/commands/test.dart';
+import 'package:golden_runner/src/commands/update.dart';
+import 'package:golden_runner/src/infrastructure/logging.dart';
 
-import 'package:args/command_runner.dart' show UsageException;
-import 'package:golden_runner/golden_runner.dart';
-
-/// Entrypoint for the `golden_runner` CLI app, which is run at the command
-/// line with the `goldens` keyword.
-Future<void> main(List<String> arguments) async {
-  if (arguments.contains("--verbose") || arguments.contains("-v")) {
-    GrLog.initAllLogs();
-  }
-
-  try {
+/// Runs golden tests or golden updates, based on the given CLI [arguments].
+class GoldensRunner {
+  Future<void> run(List<String> arguments) async {
     GrLog.commands.info("Goldens runner, running with arguments: $arguments");
 
     if (arguments.isEmpty) {
@@ -40,7 +36,5 @@ Future<void> main(List<String> arguments) async {
     // Run the command, now that the arguments have been parsed.
     GrLog.commands.fine("Running the command");
     await command.run();
-  } on UsageException catch (e) {
-    stdout.write(e);
   }
 }

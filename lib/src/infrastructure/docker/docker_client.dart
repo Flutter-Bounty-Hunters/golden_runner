@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:golden_runner/golden_runner.dart';
 
+/// A Dart client that talks to Docker on the host machine.
 class Docker {
   static Docker? _instance;
   static Docker get instance {
@@ -51,12 +52,12 @@ class Docker {
   Future<ExitCode> buildImage({
     String? dockerFilePath,
     required String imageName,
-    String? workingDirectory,
+    String? pathToProjectRoot,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     GrLog.docker.info(
-      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $workingDirectory",
+      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $pathToProjectRoot",
     );
 
     final process = await Process.start(
@@ -79,7 +80,7 @@ class Docker {
           '-q',
         '.',
       ],
-      workingDirectory: workingDirectory,
+      workingDirectory: pathToProjectRoot,
     );
     GrLog.docker.finer("Docker process started");
 
@@ -103,7 +104,7 @@ class Docker {
 
     if (exitCode != 0 && throwOnError) {
       throw Exception(
-        'Failed to create Docker image. Exit code: $exitCode. Provided configuration - working directory: $workingDirectory, Dockerfile path: $dockerFilePath, image name: $imageName',
+        'Failed to create Docker image. Exit code: $exitCode. Provided configuration - working directory: $pathToProjectRoot, Dockerfile path: $dockerFilePath, image name: $imageName',
       );
     }
 
@@ -298,7 +299,7 @@ class FakeDocker implements Docker {
   Future<ExitCode> buildImage({
     String? dockerFilePath,
     required String imageName,
-    String? workingDirectory,
+    String? pathToProjectRoot,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
@@ -356,6 +357,18 @@ enum DockerVerbosity {
     }
 
     throw Exception("Unknown DockerVerbosity: $name");
+  }
+
+  static DockerVerbosity? maybeParse(String? name) {
+    if (name == null) {
+      return null;
+    }
+
+    try {
+      return parse(name!);
+    } catch (exception) {
+      return null;
+    }
   }
 
   const DockerVerbosity(this.name);
