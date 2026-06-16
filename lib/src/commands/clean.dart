@@ -19,7 +19,7 @@ import 'package:path/path.dart' as path;
 ///  - `--verbose`, `-v`: Prints every deleted directory and file.
 ///
 /// [commandOutput] is where command text output goes. Defaults to `stdout`.
-Future<CleanResult> cleanGoldenFailures(
+Future<_CleanResult> cleanGoldenFailures(
   List<String> arguments, {
   StringSink? commandOutput,
 }) async {
@@ -30,7 +30,7 @@ Future<CleanResult> cleanGoldenFailures(
 }
 
 @visibleForTesting
-CleanRequest parseCleanCommandArguments(List<String> arguments) {
+_CleanRequest parseCleanCommandArguments(List<String> arguments) {
   GrLog.commands.fine("Parsing clean command arguments: $arguments");
 
   var includeLooseFiles = false;
@@ -75,7 +75,7 @@ CleanRequest parseCleanCommandArguments(List<String> arguments) {
     );
   }
 
-  return CleanRequest(
+  return _CleanRequest(
     targetPath: positionalArguments.isEmpty ? _defaultCleanTargetPath : positionalArguments.single,
     includeLooseFiles: includeLooseFiles,
     dryRun: dryRun,
@@ -88,8 +88,8 @@ const _defaultCleanTargetPath = "test_goldens";
 const _argVerbose = "--verbose";
 const _argVerboseShort = "-v";
 
-Future<CleanResult> _cleanGoldenFailures(
-  CleanRequest request, {
+Future<_CleanResult> _cleanGoldenFailures(
+  _CleanRequest request, {
   required StringSink commandOutput,
 }) async {
   final targetType = FileSystemEntity.typeSync(
@@ -174,7 +174,7 @@ Future<CleanResult> _cleanGoldenFailures(
     }
   }
 
-  final result = CleanResult(
+  final result = _CleanResult(
     deletedFailureDirectoryCount: failureDirectoriesWithoutDuplicateSubDirectories.length,
     deletedLooseFailureFileCount: looseFilesOutsideFailureDirectories.length,
     dryRun: request.dryRun,
@@ -241,8 +241,8 @@ bool _isWithinAnyDirectory(String childPath, Iterable<String> parentPaths) {
   return false;
 }
 
-class CleanRequest {
-  const CleanRequest({
+class _CleanRequest {
+  const _CleanRequest({
     required this.targetPath,
     required this.includeLooseFiles,
     required this.dryRun,
@@ -269,8 +269,8 @@ class CleanRequest {
   final bool verbose;
 }
 
-class CleanResult {
-  const CleanResult({
+class _CleanResult {
+  const _CleanResult({
     required this.deletedFailureDirectoryCount,
     required this.deletedLooseFailureFileCount,
     required this.dryRun,
