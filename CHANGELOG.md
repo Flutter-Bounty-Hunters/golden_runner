@@ -1,3 +1,7 @@
+## 0.2.2
+### June 17, 2026
+ * Feature: Add a `goldens clean` command to delete failure directories and files.
+
 ## 0.2.1
 ### April 26, 2026
  * Fix: Listen to Docker stdout and stderr concurrently to prevent deadlock.

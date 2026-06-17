@@ -1,3 +1,11 @@
+<p align="center">
+  <a href="https://flutterbountyhunters.com" target="_blank">
+    <img src="https://github.com/Flutter-Bounty-Hunters/flutter_test_robots/assets/7259036/1b19720d-3dad-4ade-ac76-74313b67a898" alt="Built by the Flutter Bounty Hunters">
+  </a>
+</p>
+
+---
+
 # Golden Runner
 CLI app that runs golden tests within an Ubuntu Docker container, to help reduce flakiness.
 
@@ -15,16 +23,14 @@ with the following...
 
     goldens clean
 
-The purpose of the `goldens` command is to run your golden tests in an environment that can
-reasonably be replicated between local developers and CI systems. Generally speaking, the
-only environment that can be freely configured and simulated across every other platform is
-Linux. More specifically, if we factor in the importance of GitHub Runners, that platform
-is Ubuntu. Therefore, the `goldens` command builds and runs an Ubuntu image, and within that
-image it runs golden tests.
+The purpose of the `goldens` command is to run your golden tests in an environment that produces
+consistent results. 
 
-When a developer on your team creates, updates, or compares goldens, that developer should
-use the `goldens` command locally. This way, whether your developer is running Mac, Windows,
-or Linux, the goldens will be painted as if they're running on Ubuntu.
+ * To get consistent results: Runs in a Docker Container.
+ * To keep it free: Runs in an Ubuntu image.
+ * To minimize GitHub runner costs: Runs in an Ubuntu image.
+
+When testing or updating goldens locally, use `goldens` instead of `flutter test`.
 
 Then, in CI, run your golden tests on an Ubuntu runner.
 
@@ -39,7 +45,7 @@ Activate from Pub:
 
     dart pub global activate golden_runner
 
-Activate from local source:
+Or, activate from local source:
 
     # From outside the `golden_runner` directory:
     dart pub global activate --source path ./golden_runner
@@ -51,7 +57,7 @@ Activate from local source:
 The `goldens` command must be run from the directory of the app/package under test.
 
 ```
-# Run all tests.
+# Run all tests in a test_goldens directory.
 goldens test
 
 # Run tests with a given name.
@@ -68,7 +74,7 @@ goldens test --plain-name="something" test_goldens/my_dir
 The `goldens` command must be run from the directory of the app/package under test.
 
 ```
-# Update all goldens.
+# Update all goldens in a test_goldens directory.
 goldens update
 
 # Update all goldens in a directory.
