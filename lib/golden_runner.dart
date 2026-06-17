@@ -1,4 +1,8 @@
 export 'src/commands/clean.dart';
-export 'src/commands/commands.dart';
-export 'src/docker.dart';
-export 'src/logging.dart';
+export 'src/commands/command_base.dart';
+export 'src/commands/command_base_goldens.dart';
+export 'src/commands/test.dart';
+export 'src/commands/update.dart';
+export 'src/infrastructure/arguments.dart';
+export 'src/infrastructure/docker/docker_client.dart';
+export 'src/infrastructure/logging.dart';

@@ -101,10 +101,8 @@ void main() {
           ).writeAsString("failure");
 
           final output = StringBuffer();
-          final result = await cleanGoldenFailures(
-            [targetDirectory.path],
-            commandOutput: output,
-          );
+          final command = CleanCommand(output)..parseArguments([targetDirectory.path]);
+          final result = await command.run();
 
           expect(result.deletedFailureDirectoryCount, 2);
           expect(result.deletedLooseFailureFileCount, 0);
@@ -128,9 +126,8 @@ void main() {
         );
         await looseFailureFile.writeAsString("failure");
 
-        await cleanGoldenFailures(
-          ["--silent", targetDirectory.path],
-        );
+        final command = CleanCommand()..parseArguments(["--silent", targetDirectory.path]);
+        await command.run();
 
         expect(await looseFailureFile.exists(), true);
       });
@@ -162,10 +159,8 @@ void main() {
         }
 
         final output = StringBuffer();
-        final result = await cleanGoldenFailures(
-          ["--loose-files", targetDirectory.path],
-          commandOutput: output,
-        );
+        final command = CleanCommand(output)..parseArguments(["--loose-files", targetDirectory.path]);
+        final result = await command.run();
 
         expect(result.deletedFailureDirectoryCount, 0);
         expect(result.deletedLooseFailureFileCount, 5);
@@ -198,10 +193,8 @@ void main() {
           await looseFailureFile.create(recursive: true);
 
           final output = StringBuffer();
-          final result = await cleanGoldenFailures(
-            ["--loose-files", "--dry-run", targetDirectory.path],
-            commandOutput: output,
-          );
+          final command = CleanCommand(output)..parseArguments(["--loose-files", "--dry-run", targetDirectory.path]);
+          final result = await command.run();
 
           expect(result.deletedFailureDirectoryCount, 1);
           expect(result.deletedLooseFailureFileCount, 1);
@@ -229,10 +222,8 @@ void main() {
         await looseFailureFile.create(recursive: true);
 
         final output = StringBuffer();
-        await cleanGoldenFailures(
-          ["--loose-files", "--verbose", targetDirectory.path],
-          commandOutput: output,
-        );
+        final command = CleanCommand(output)..parseArguments(["--loose-files", "--verbose", targetDirectory.path]);
+        await command.run();
 
         final outputLines = _outputLines(output);
         expect(outputLines[0], startsWith("Deleted directory:"));
@@ -257,9 +248,8 @@ void main() {
         await targetFile.create(recursive: true);
         await failureDirectory.create(recursive: true);
 
-        await cleanGoldenFailures(
-          ["--silent", targetFile.path],
-        );
+        final command = CleanCommand()..parseArguments(["--silent", targetFile.path]);
+        await command.run();
 
         expect(await failureDirectory.exists(), false);
       });
@@ -267,10 +257,10 @@ void main() {
 
     test("throws when the target path doesn't exist", () async {
       await _withTempDirectory((tempDirectory) async {
+        final command = CleanCommand()..parseArguments([path.join(tempDirectory.path, "missing_goldens")]);
+
         expect(
-          () => cleanGoldenFailures(
-            [path.join(tempDirectory.path, "missing_goldens")],
-          ),
+          () => command.run(),
           throwsA(
             predicate(
               (Object error) => error.toString().contains("No such directory to clean failures"),
@@ -307,9 +297,8 @@ void main() {
         );
         await symlinkedFailureDirectory.create(externalFailureDirectory.path);
 
-        await cleanGoldenFailures(
-          ["--loose-files", "--silent", targetDirectory.path],
-        );
+        final command = CleanCommand()..parseArguments(["--loose-files", "--silent", targetDirectory.path]);
+        await command.run();
 
         expect(await symlinkedDirectory.exists(), true);
         expect(await symlinkedFailureDirectory.exists(), true);
