@@ -72,7 +72,19 @@ abstract class DockerContainerCommand implements Command {
   @override
   Future<void> run() async {
     await DockerGoldenContainer().buildAndRun(
-      RunDockerContainerRequest(
+      assembleDockerContainerRequest(),
+    );
+  }
+
+  /// Uses parsed arguments to assemble a [RunDockerContainerRequest], which is then used to tell Docker how to
+  /// build an Image and then run in a Container.
+  ///
+  /// This exists as a method only because we want to verify this request in tests, and we can't create this
+  /// request during [parseArguments] because it depends on sub-class argument parsing, which might happen
+  /// after we parse our arguments.
+  @protected
+  @visibleForTesting
+  RunDockerContainerRequest assembleDockerContainerRequest() => RunDockerContainerRequest(
         dockerImageName: dockerImageName,
         dockerFilePath: dockerFilePath,
         dockerVerbosity: dockerVerbosity,
@@ -80,7 +92,5 @@ abstract class DockerContainerCommand implements Command {
         pathToProjectRoot: pathToProjectRoot,
         containerWorkingDirectory: containerWorkingDirectory,
         command: command,
-      ),
-    );
-  }
+      );
 }

@@ -4,7 +4,9 @@ import 'package:golden_runner/src/commands/command_base_goldens.dart';
 ///
 /// Failure scene images are generated for Golden mismatches, as per usual Flutter Golden behavior.
 class TestGoldensCommand extends GoldensCommand {
-  TestGoldensCommand();
+  TestGoldensCommand({
+    super.environment,
+  });
 
   @override
   List<String> get command => [

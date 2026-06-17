@@ -1,9 +1,13 @@
 String? parseArgumentOption(List<String> arguments, String name) {
   String? value;
   for (int i = arguments.length - 1; i >= 0; i -= 1) {
-    if (arguments[i] == name && i < arguments.length - 1) {
+    if (arguments[i] == name) {
       if (value != null) {
         throw Exception("Multiple values found for parameter: $name");
+      }
+
+      if (i == arguments.length - 1 || _isLongArgumentName(arguments[i + 1])) {
+        throw Exception("Missing value for parameter: $name");
       }
 
       value = arguments[i + 1];
@@ -30,4 +34,8 @@ String? parseArgumentOption(List<String> arguments, String name) {
   }
 
   return value;
+}
+
+bool _isLongArgumentName(String argument) {
+  return argument.startsWith("--") && argument.length > "--".length;
 }

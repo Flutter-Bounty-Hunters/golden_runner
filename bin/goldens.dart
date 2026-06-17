@@ -41,6 +41,17 @@ Future<void> main(List<String> arguments) async {
     GrLog.commands.fine("Running the command");
     await command.run();
   } on UsageException catch (e) {
-    stdout.write(e);
+    stderr.writeln(e);
+    exitCode = 64;
+  } on Exception catch (e) {
+    stderr.writeln(_formatException(e));
+    exitCode = 1;
   }
+}
+
+String _formatException(Exception exception) {
+  final message = exception.toString();
+  return message.startsWith("Exception: ") //
+      ? message.substring("Exception: ".length)
+      : message;
 }
