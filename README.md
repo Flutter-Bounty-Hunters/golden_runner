@@ -87,6 +87,41 @@ goldens update --plain-name="something"
 goldens update --plain-name "something" test_goldens/my_dir
 ```
 
+## Pin the Flutter version:
+By default, golden_runner's built-in Dockerfile installs Flutter from its default branch. If your
+project (or one of its dependencies) only builds against a specific Flutter SDK, a mismatched
+version can fail to compile, or paint goldens differently than your project and CI.
+
+Pin the container's Flutter version with `--flutter-version`, passing any git ref of the
+`flutter/flutter` repo (a release tag, a channel, or a commit):
+
+```
+# Pin to a release tag (matches an FVM `.fvmrc` pin, for example).
+goldens update --flutter-version 3.44.6
+
+# Pin a channel.
+goldens test --flutter-version stable
+```
+
+This applies to golden_runner's built-in Dockerfile. When you provide your own Dockerfile with
+`--docker-file-path`, that Dockerfile controls the Flutter version.
+
+## Large projects and the build context:
+golden_runner copies your project into the Docker image to run tests. Without a `.dockerignore`,
+the *entire* directory — including generated output like `build/` and `.dart_tool/`, plus `.git` —
+is sent to Docker and copied into the image on every run, which can add many minutes to each build
+(especially in a mono-repo).
+
+To avoid this, when the build context is large (2 GiB or more) and has no `.dockerignore`,
+golden_runner applies a sensible default Flutter/Dart `.dockerignore` **for that build only** — it's
+written next to golden_runner's generated Dockerfile in a temp directory (a Dockerfile-adjacent
+ignore file that BuildKit honors), so **no file is written into your project**. The default excludes
+generated output that the container regenerates anyway (it runs its own `flutter pub get`), and keeps
+all sources, `pubspec.yaml`/`pubspec.lock`, and test directories so a pub workspace still resolves.
+
+golden_runner tells you when it applies the default, and it always **defers to a `.dockerignore` you
+already have** in the project. Add your own `.dockerignore` to fully control what's sent to Docker.
+
 ## Clean golden failure artifacts:
 The `goldens` command must be run from the directory of the app/package under test.
 
@@ -125,9 +160,10 @@ Run the following command from your project directory:
 
     docker build -f [path_to]/golden_tester.Dockerfile -t golden_tester .
 
-Note: The `golden_runner` package internally sends a Dockerfile to Docker over stdin. When running the
-Docker build directly, you'll need to provide that Dockerfile, either as a file, or through stdin. Here's
-a Dockerfile that should work for you:
+Note: The `golden_runner` package internally writes its Dockerfile to a temp directory and points
+`docker build -f` at it (which also lets it attach a default `.dockerignore` without touching your
+project). When running the Docker build directly, you'll need to provide that Dockerfile yourself,
+either as a file or through stdin. Here's a Dockerfile that should work for you:
 
 ```
 FROM ubuntu:latest
@@ -139,7 +175,7 @@ USER root
 
 RUN apt update
 
-RUN apt install -y git curl unzip
+RUN apt install -y git curl unzip clang build-essential
 
 # Print the Ubuntu version. Useful when there are failing tests.
 RUN cat /etc/lsb-release

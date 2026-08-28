@@ -7,7 +7,11 @@ USER root
 
 RUN apt update
 
-RUN apt install -y git curl unzip
+# git/curl/unzip are needed to fetch Flutter. clang and build-essential provide a C
+# toolchain so packages with Dart native-asset build hooks (package:native_toolchain_c)
+# can compile their native code inside the container. Without a compiler on PATH, such
+# builds fail with "No compiler configured on host".
+RUN apt install -y git curl unzip clang build-essential
 
 # Print the Ubuntu version. Useful when there are failing tests.
 RUN cat /etc/lsb-release

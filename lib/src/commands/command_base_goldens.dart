@@ -5,6 +5,7 @@ import 'package:golden_runner/src/infrastructure/arguments.dart';
 import 'package:golden_runner/src/infrastructure/logging.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
+import 'package:yaml/yaml.dart';
 
 /// Base class for a Golden command, such as `test` or `update` goldens.
 ///
@@ -161,6 +162,15 @@ abstract class GoldensCommand extends DockerContainerCommand {
     );
     _packageDirectory = path.basename(currentDirectoryPath);
 
+    // Fail early (before building any Docker image) if this package belongs to a
+    // Dart pub workspace whose root won't be copied into the container. Without
+    // this check, the container copy contains a workspace member but no workspace
+    // root, and Flutter fails deep inside the container with a cryptic pub error.
+    _verifyWorkspaceRootWillBeCopied(
+      packageDirectoryPath: currentDirectoryPath,
+      projectRootPath: projectRootPath,
+    );
+
     // Other arguments passed at the end of the command.
     // For example, the test directory.
     _testCommandArguments = [
@@ -236,6 +246,107 @@ abstract class GoldensCommand extends DockerContainerCommand {
     return !_environment.directoryExists(value) && !_environment.fileExists(value);
   }
 
+  /// Verifies that, when the package under test is a member of a Dart pub workspace,
+  /// that workspace's root is included in the files copied into the Docker container.
+  ///
+  /// golden_runner copies the "project root" ([pathToProjectRoot]) into the container.
+  /// A pub workspace member (a pubspec with `resolution: workspace`) can't resolve its
+  /// dependencies unless the workspace root (a pubspec with a top-level `workspace:` key)
+  /// is copied alongside it. If the workspace root sits above the project root, it won't
+  /// be copied, and Flutter fails inside the container. In that case, throw a clear error
+  /// that tells the caller to point [argPathToProjectRoot] at the workspace root.
+  void _verifyWorkspaceRootWillBeCopied({
+    required String packageDirectoryPath,
+    required String projectRootPath,
+  }) {
+    final packagePubspec = _environment.readFileAsString(
+      path.join(packageDirectoryPath, "pubspec.yaml"),
+    );
+    if (packagePubspec == null || !_pubspecIsWorkspaceMember(packagePubspec)) {
+      // Either there's no pubspec to inspect, or this package isn't a workspace
+      // member. There's no workspace root that needs to be copied.
+      return;
+    }
+
+    // This package is a workspace member. Find the workspace root by walking up
+    // the host directory tree, the same way pub does inside the container.
+    final workspaceRootPath = _findWorkspaceRoot(packageDirectoryPath);
+    final normalizedProjectRoot = path.normalize(projectRootPath);
+    if (workspaceRootPath != null &&
+        (path.equals(normalizedProjectRoot, workspaceRootPath) ||
+            path.isWithin(normalizedProjectRoot, workspaceRootPath))) {
+      // The workspace root is at, or within, the project root that we copy into
+      // the container, so it'll be available to pub. Nothing to do.
+      return;
+    }
+
+    // The workspace root won't be copied into the container. Suggest the path the
+    // caller most likely needs to pass. If we found the actual root, suggest the
+    // exact relative path to it; otherwise fall back to a generic example.
+    final suggestedProjectRoot = workspaceRootPath != null
+        ? _toPosixPath(path.relative(workspaceRootPath, from: packageDirectoryPath))
+        : "../..";
+
+    throw Exception(
+      "This package is a member of a Dart pub workspace (its pubspec.yaml has "
+      "`resolution: workspace`), but the workspace root isn't included in the files "
+      "copied into the Docker container.\n"
+      "\n"
+      "golden_runner copies the project root into the container, which defaults to the "
+      "current directory. Point it at the workspace root so the root pubspec.yaml is "
+      "copied too, using ${GoldensCommand.argPathToProjectRoot}. For example:\n"
+      "\n"
+      "    goldens ${GoldensCommand.argPathToProjectRoot} $suggestedProjectRoot <test target>",
+    );
+  }
+
+  /// Returns `true` if the given [pubspecContent] declares `resolution: workspace`,
+  /// which marks it as a member of a Dart pub workspace.
+  bool _pubspecIsWorkspaceMember(String pubspecContent) {
+    final pubspec = _tryParseYamlMap(pubspecContent);
+    return pubspec != null && pubspec["resolution"] == "workspace";
+  }
+
+  /// Returns `true` if the given [pubspecContent] has a top-level `workspace:` key,
+  /// which marks it as the root of a Dart pub workspace.
+  bool _pubspecIsWorkspaceRoot(String pubspecContent) {
+    final pubspec = _tryParseYamlMap(pubspecContent);
+    return pubspec != null && pubspec.containsKey("workspace");
+  }
+
+  /// Walks up from [packageDirectoryPath] looking for the pubspec.yaml that roots the
+  /// Dart pub workspace (the one with a top-level `workspace:` key), and returns its
+  /// directory, or `null` if no workspace root is found.
+  String? _findWorkspaceRoot(String packageDirectoryPath) {
+    var directory = path.normalize(packageDirectoryPath);
+    while (true) {
+      final pubspecContent = _environment.readFileAsString(
+        path.join(directory, "pubspec.yaml"),
+      );
+      if (pubspecContent != null && _pubspecIsWorkspaceRoot(pubspecContent)) {
+        return directory;
+      }
+
+      final parent = path.dirname(directory);
+      if (parent == directory) {
+        // Reached the filesystem root without finding a workspace root.
+        return null;
+      }
+      directory = parent;
+    }
+  }
+
+  Map? _tryParseYamlMap(String yamlContent) {
+    try {
+      final document = loadYaml(yamlContent);
+      return document is Map ? document : null;
+    } catch (_) {
+      // If the pubspec can't be parsed, don't block the run over it. Let Flutter
+      // surface any resulting error from inside the container.
+      return null;
+    }
+  }
+
   String _packageRelativePath(String hostPath) {
     final packageRelativePath = path.isAbsolute(hostPath) //
         ? path.relative(hostPath, from: _environment.currentDirectoryPath)
@@ -253,4 +364,10 @@ class GoldensCommandEnvironment {
   bool directoryExists(String directoryPath) => Directory(directoryPath).existsSync();
 
   bool fileExists(String filePath) => File(filePath).existsSync();
+
+  /// Reads the file at [filePath] as a string, or returns `null` if no such file exists.
+  String? readFileAsString(String filePath) {
+    final file = File(filePath);
+    return file.existsSync() ? file.readAsStringSync() : null;
+  }
 }

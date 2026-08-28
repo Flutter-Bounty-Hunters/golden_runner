@@ -85,6 +85,34 @@ void main() {
         ]);
       });
 
+      test("with a pinned Flutter version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([
+            "--flutter-version",
+            "3.44.6",
+          ]);
+
+        expect(command.flutterVersion, "3.44.6");
+        // The pinned version flows into the Docker request so it reaches the generated Dockerfile.
+        expect(command.assembleDockerContainerRequest().flutterVersion, "3.44.6");
+        // The version isn't mistaken for the test target.
+        expect(command.testCommandArguments, ["test_goldens"]);
+      });
+
+      test("defaults to no pinned Flutter version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([]);
+
+        expect(command.flutterVersion, null);
+        expect(command.assembleDockerContainerRequest().flutterVersion, null);
+      });
+
       test("handles named arguments when there's no specified test directory", () {
         final command = UpdateGoldensCommand(
           environment: FakeGoldensCommandEnvironment(
@@ -196,6 +224,67 @@ void main() {
             "none",
           ]);
         expect(commandWithNoVerbosity.dockerVerbosity, DockerVerbosity.none);
+      });
+    });
+
+    group("pub workspace validation >", () {
+      const workspaceMemberPubspec = "name: my_app\nresolution: workspace\n";
+      const workspaceRootPubspec = "name: my_workspace\nworkspace:\n  - packages/my_app\n";
+
+      test("throws with a --path-to-project-root hint when the workspace root won't be copied", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              // The package under test is a workspace member.
+              "/workspace/repo/packages/my_app/pubspec.yaml": workspaceMemberPubspec,
+              // The workspace root lives at the repo root, above the (default) project root.
+              "/workspace/repo/pubspec.yaml": workspaceRootPubspec,
+            },
+          ),
+        );
+
+        expect(
+          () => command.parseArguments([]),
+          throwsA(
+            predicate((Object error) {
+              final message = error.toString();
+              return message.contains("member of a Dart pub workspace") &&
+                  message.contains("--path-to-project-root") &&
+                  // The hint suggests the exact relative path from the package to the root.
+                  message.contains("--path-to-project-root ../..");
+            }),
+          ),
+        );
+      });
+
+      test("passes when --path-to-project-root includes the workspace root", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              "/workspace/repo/packages/my_app/pubspec.yaml": workspaceMemberPubspec,
+              "/workspace/repo/pubspec.yaml": workspaceRootPubspec,
+            },
+          ),
+        );
+
+        // Pointing the project root at the repo root includes the workspace root
+        // in the container copy, so parsing succeeds.
+        expect(() => command.parseArguments(["--path-to-project-root", "../.."]), returnsNormally);
+      });
+
+      test("passes for a normal package that isn't a workspace member", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+            fileContents: {
+              "/workspace/my_app/pubspec.yaml": "name: my_app\n",
+            },
+          ),
+        );
+
+        expect(() => command.parseArguments([]), returnsNormally);
       });
     });
 

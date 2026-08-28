@@ -8,6 +8,7 @@ abstract class DockerContainerCommand implements Command {
   static const argDockerFilePath = "--docker-file-path";
   static const argDockerImageName = "--docker-image-name";
   static const argDockerVerbosity = "--docker-verbosity";
+  static const argFlutterVersion = "--flutter-version";
 
   static const defaultDockerImageName = "golden_tester";
   static const defaultDockerVerbosity = DockerVerbosity.errorOnly;
@@ -26,6 +27,20 @@ abstract class DockerContainerCommand implements Command {
   @visibleForTesting
   DockerVerbosity get dockerVerbosity => _dockerVerbosity!;
   DockerVerbosity? _dockerVerbosity;
+
+  /// The Flutter version to install in the Docker Container, e.g., `"3.44.6"`, `"stable"`,
+  /// or any git ref (tag/branch/commit) of the flutter/flutter repository.
+  ///
+  /// When `null`, the default Dockerfile clones Flutter's default branch. Pinning a version
+  /// is important when the project (or its dependencies) only build against a specific Flutter
+  /// SDK - a mismatched SDK can fail to compile, or paint goldens differently.
+  ///
+  /// This only applies to golden_runner's built-in Dockerfile. When a custom Dockerfile is
+  /// provided via [argDockerFilePath], that Dockerfile controls the Flutter version.
+  @protected
+  @visibleForTesting
+  String? get flutterVersion => _flutterVersion;
+  String? _flutterVersion;
 
   /// Docker mount paths from the host machine into the Docker Container, which allows the Docker Container
   /// to alter the host file system.
@@ -67,6 +82,8 @@ abstract class DockerContainerCommand implements Command {
 
     _dockerVerbosity =
         DockerVerbosity.maybeParse(parseArgumentOption(arguments, argDockerVerbosity)) ?? defaultDockerVerbosity;
+
+    _flutterVersion = parseArgumentOption(arguments, argFlutterVersion);
   }
 
   @override
@@ -88,6 +105,7 @@ abstract class DockerContainerCommand implements Command {
         dockerImageName: dockerImageName,
         dockerFilePath: dockerFilePath,
         dockerVerbosity: dockerVerbosity,
+        flutterVersion: flutterVersion,
         mountPaths: mountPaths,
         pathToProjectRoot: pathToProjectRoot,
         containerWorkingDirectory: containerWorkingDirectory,

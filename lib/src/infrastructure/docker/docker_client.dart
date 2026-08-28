@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:collection/collection.dart';
+import 'package:golden_runner/src/infrastructure/build_context.dart';
+import 'package:golden_runner/src/infrastructure/checkpoints.dart';
 import 'package:golden_runner/src/infrastructure/logging.dart';
 
 /// Client to build a Docker Image and then run it in a Docker Container.
@@ -9,39 +11,87 @@ class DockerGoldenContainer {
   const DockerGoldenContainer();
 
   Future<void> buildAndRun(RunDockerContainerRequest request) async {
+    // Print high-level progress with per-step timing, because a golden run can spend several
+    // minutes in each phase (especially building the image). Stay silent only when the caller
+    // asked for no output at all.
+    final checkpoints = GrCheckpoints(
+      enabled: request.dockerVerbosity != DockerVerbosity.none,
+      totalSteps: 3,
+    );
+
+    // Before the (potentially slow) build, keep the build context small: if it's
+    // large and has no `.dockerignore`, the whole directory - including generated
+    // output - is copied into the image on every run. When we're using golden_runner's
+    // built-in Dockerfile, apply a sensible default `.dockerignore` for this build via
+    // a Dockerfile-adjacent ignore file, so nothing is written into the user's project.
+    // A user's own `.dockerignore` is always respected.
+    String? dockerignoreContent;
+    if (request.dockerVerbosity != DockerVerbosity.none && request.dockerFilePath == null) {
+      final assessment = await const BuildContextGuard().assess(request.pathToProjectRoot);
+      if (assessment.decision == BuildContextIgnoreDecision.applyDefault) {
+        dockerignoreContent = BuildContextGuard.defaultDockerignore;
+        final full = "${BuildContextGuard.formatBytes(assessment.measuredBytes)}${assessment.isApproximate ? "+" : ""}";
+        final kept = BuildContextGuard.formatBytes(assessment.keptBytes);
+        final saved = BuildContextGuard.formatBytes(assessment.savedBytes);
+        final percent =
+            assessment.measuredBytes > 0 ? (assessment.savedBytes * 100 / assessment.measuredBytes).round() : 0;
+        checkpoints.info(
+          "Build context at '${assessment.contextPath}' is $full with no .dockerignore - the whole tree would be copied into the image on every run.\n"
+          "Applying golden_runner's default .dockerignore shrinks it to ~$kept for this build (saving ~$saved, $percent%) - nothing is written to your project.\n"
+          "Add your own .dockerignore to the project to customize what's sent to Docker.",
+        );
+      }
+    }
+
     // Builds the image used to run the container. We can build the image
     // even if it already exists. Docker will cache each step used in the
     // Dockerfile, so subsequent builds will be faster.
-    await Docker.instance.buildImage(
-      dockerFilePath: request.dockerFilePath,
-      imageName: request.dockerImageName,
-      pathToProjectRoot: request.pathToProjectRoot,
-      verbosity: request.dockerVerbosity,
+    final buildingImageLabel = request.flutterVersion != null
+        ? "Building Docker image (Flutter ${request.flutterVersion})"
+        : "Building Docker image";
+    await checkpoints.step(
+      buildingImageLabel,
+      () => Docker.instance.buildImage(
+        dockerFilePath: request.dockerFilePath,
+        imageName: request.dockerImageName,
+        pathToProjectRoot: request.pathToProjectRoot,
+        flutterVersion: request.flutterVersion,
+        dockerignoreContent: dockerignoreContent,
+        verbosity: request.dockerVerbosity,
+      ),
     );
 
     // Runs the Docker container, which then runs the Flutter test command internally.
-    await Docker.instance.runContainer(
-      imageName: request.dockerImageName,
+    await checkpoints.step(
+      "Running golden tests in container",
+      () => Docker.instance.runContainer(
+        imageName: request.dockerImageName,
 
-      // (Maybe) mounted part of the host machine with the Container so the Container can alter
-      // the host machine.
-      mountPaths: request.mountPaths,
+        // (Maybe) mounted part of the host machine with the Container so the Container can alter
+        // the host machine.
+        mountPaths: request.mountPaths,
 
-      // Within the container, set the working directory to the place where the image
-      // copied the project into the container.
-      workingDirectory: request.containerWorkingDirectory,
+        // Within the container, set the working directory to the place where the image
+        // copied the project into the container.
+        workingDirectory: request.containerWorkingDirectory,
 
-      // The CLI command that runs in the Container. This where all the interesting stuff happens.
-      commandToRun: request.command,
+        // The CLI command that runs in the Container. This where all the interesting stuff happens.
+        commandToRun: request.command,
 
-      verbosity: request.dockerVerbosity,
+        verbosity: request.dockerVerbosity,
+      ),
     );
 
     // After running, we don't need the image anymore. Remove it.
-    await Docker.instance.deleteImage(
-      imageName: request.dockerImageName,
-      verbosity: request.dockerVerbosity,
+    await checkpoints.step(
+      "Removing Docker image",
+      () => Docker.instance.deleteImage(
+        imageName: request.dockerImageName,
+        verbosity: request.dockerVerbosity,
+      ),
     );
+
+    checkpoints.done();
   }
 }
 
@@ -50,6 +100,7 @@ class RunDockerContainerRequest {
     this.dockerFilePath,
     required this.dockerImageName,
     required this.dockerVerbosity,
+    this.flutterVersion,
     this.mountPaths = const {},
     this.pathToProjectRoot = ".",
     this.containerWorkingDirectory = ".",
@@ -80,6 +131,13 @@ class RunDockerContainerRequest {
   /// as possible.
   final DockerVerbosity dockerVerbosity;
 
+  /// The Flutter version (a git ref of the flutter/flutter repo, e.g., `"3.44.6"` or `"stable"`)
+  /// to install in golden_runner's built-in Dockerfile.
+  ///
+  /// When `null`, the built-in Dockerfile clones Flutter's default branch. Ignored when a custom
+  /// Dockerfile is provided via [dockerFilePath].
+  final String? flutterVersion;
+
   /// Locations on the host machine where the Container should be able to read/write.
   final Set<String> mountPaths;
 
@@ -108,6 +166,7 @@ class RunDockerContainerRequest {
           dockerFilePath == other.dockerFilePath &&
           dockerImageName == other.dockerImageName &&
           dockerVerbosity == other.dockerVerbosity &&
+          flutterVersion == other.flutterVersion &&
           pathToProjectRoot == other.pathToProjectRoot &&
           containerWorkingDirectory == other.containerWorkingDirectory &&
           const DeepCollectionEquality().equals(mountPaths, other.mountPaths) &&
@@ -118,6 +177,7 @@ class RunDockerContainerRequest {
         dockerFilePath,
         dockerImageName,
         dockerVerbosity,
+        flutterVersion,
         const DeepCollectionEquality().hash(mountPaths),
         pathToProjectRoot,
         containerWorkingDirectory,
@@ -175,91 +235,114 @@ class Docker {
     String? dockerFilePath,
     required String imageName,
     String? pathToProjectRoot,
+    String? flutterVersion,
+    String? dockerignoreContent,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     GrLog.docker.info(
-      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $pathToProjectRoot",
+      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $pathToProjectRoot, flutter version: ${flutterVersion ?? "default"}",
     );
 
-    final process = await Process.start(
-      'docker',
-      [
-        'build',
-        // Note: We can't use "interactive" mode because we (may) need to send the Dockerfile
-        // through stdin at the end of the Docker command.
-        '-t',
-        imageName, // e.g., "golden-tester"
-        if (dockerFilePath != null) ...[
-          '-f',
-          dockerFilePath, // e.g., "golden-tester.Dockerfile"
-        ] else ...[
-          // Send the Dockerfile through STDIN instead of from a file.
-          '-f',
-          '-',
-        ],
-        if (verbosity != DockerVerbosity.standard) //
-          '-q',
-        '.',
-      ],
-      workingDirectory: pathToProjectRoot,
-    );
-    GrLog.docker.finer("Docker process started");
-
+    // For golden_runner's built-in Dockerfile, write it to a temp directory OUTSIDE
+    // the project and point `-f` at it. When a default `.dockerignore` is supplied,
+    // write it next to the Dockerfile as a Dockerfile-adjacent ignore file
+    // (`<dockerfile>.dockerignore`), which BuildKit honors for the build context.
+    // This lets us shrink the context without writing any file into the user's project.
+    Directory? tempBuildDir;
+    var effectiveDockerFilePath = dockerFilePath;
     if (dockerFilePath == null) {
-      // Send the Dockerfile through STDIN instead of from a file.
-      process.stdin.write(_createVirtualDockerfile());
-      await process.stdin.close();
-      GrLog.docker.finer("Virtual Dockerfile sent to Docker process");
+      tempBuildDir = Directory.systemTemp.createTempSync("golden_runner_build");
+      final dockerfile = File(_join(tempBuildDir.path, "golden_tester.Dockerfile"))
+        ..writeAsStringSync(_createVirtualDockerfile(flutterVersion: flutterVersion));
+      if (dockerignoreContent != null) {
+        File("${dockerfile.path}.dockerignore").writeAsStringSync(dockerignoreContent);
+      }
+      effectiveDockerFilePath = dockerfile.path;
+      GrLog.docker.finer("Wrote virtual Dockerfile to ${dockerfile.path}");
     }
 
-    // Handle the Process's stdout and stderr concurrently to prevent a possible deadlock.
-    await Future.wait([
-      process.stdout.transform(utf8.decoder).forEach(
-          verbosity != DockerVerbosity.errorOnly && verbosity != DockerVerbosity.none ? _sendToStdOut : _noOpOutput),
-      process.stderr.transform(utf8.decoder).forEach(verbosity != DockerVerbosity.none ? _sendToStdErr : _noOpOutput),
-    ]);
-
-    GrLog.docker.finer("Waiting for Docker process to finish");
-    final exitCode = await process.exitCode;
-    GrLog.docker.finer("Docker process finished - exist code: $exitCode");
-
-    if (exitCode != 0 && throwOnError) {
-      throw Exception(
-        'Failed to create Docker image. Exit code: $exitCode. Provided configuration - working directory: $pathToProjectRoot, Dockerfile path: $dockerFilePath, image name: $imageName',
+    try {
+      final process = await Process.start(
+        'docker',
+        [
+          'build',
+          '-t',
+          imageName, // e.g., "golden-tester"
+          '-f',
+          effectiveDockerFilePath!, // golden_runner's temp Dockerfile, or the caller's own
+          if (verbosity != DockerVerbosity.standard) //
+            '-q',
+          '.',
+        ],
+        workingDirectory: pathToProjectRoot,
       );
-    }
+      GrLog.docker.finer("Docker process started");
 
-    return exitCode;
+      // Handle the Process's stdout and stderr concurrently to prevent a possible deadlock.
+      await Future.wait([
+        process.stdout.transform(utf8.decoder).forEach(
+            verbosity != DockerVerbosity.errorOnly && verbosity != DockerVerbosity.none ? _sendToStdOut : _noOpOutput),
+        process.stderr.transform(utf8.decoder).forEach(verbosity != DockerVerbosity.none ? _sendToStdErr : _noOpOutput),
+      ]);
+
+      GrLog.docker.finer("Waiting for Docker process to finish");
+      final exitCode = await process.exitCode;
+      GrLog.docker.finer("Docker process finished - exist code: $exitCode");
+
+      if (exitCode != 0 && throwOnError) {
+        throw Exception(
+          'Failed to create Docker image. Exit code: $exitCode. Provided configuration - working directory: $pathToProjectRoot, Dockerfile path: $effectiveDockerFilePath, image name: $imageName',
+        );
+      }
+
+      return exitCode;
+    } finally {
+      tempBuildDir?.deleteSync(recursive: true);
+    }
   }
 
-  String _createVirtualDockerfile() {
-    return r'''
+  String _createVirtualDockerfile({String? flutterVersion}) {
+    // Choose how to install Flutter. When a version is pinned, check out that exact git ref
+    // so the container's Flutter matches the project (and CI) - a mismatched SDK can fail to
+    // compile dependencies or paint goldens differently. A pinned version never moves, so we
+    // let Docker cache the clone layer. Otherwise, fall back to the default branch and use the
+    // GitHub refs endpoint to bust the cache whenever Flutter pushes a new commit.
+    final installFlutter = flutterVersion != null
+        ? "# Clone the pinned Flutter version so the container matches the project (and CI).\n"
+            "RUN git clone https://github.com/flutter/flutter.git --branch $flutterVersion \${FLUTTER_HOME}"
+        : "# Invalidate the cache when flutter pushes a new commit.\n"
+            "ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable\n"
+            "\n"
+            "RUN git clone https://github.com/flutter/flutter.git \${FLUTTER_HOME}";
+
+    // git/curl/unzip are needed to fetch Flutter. clang and build-essential provide a C
+    // toolchain so packages with Dart native-asset build hooks (package:native_toolchain_c)
+    // can compile their native code inside the container. Without a compiler on PATH, such
+    // builds fail with "No compiler configured on host".
+    return """
 FROM ubuntu:latest
 
-ENV FLUTTER_HOME=${HOME}/sdks/flutter 
-ENV PATH ${PATH}:${FLUTTER_HOME}/bin:${FLUTTER_HOME}/bin/cache/dart-sdk/bin
+ENV FLUTTER_HOME=\${HOME}/sdks/flutter
+ENV PATH \${PATH}:\${FLUTTER_HOME}/bin:\${FLUTTER_HOME}/bin/cache/dart-sdk/bin
 
 USER root
 
 RUN apt update
 
-RUN apt install -y git curl unzip
+RUN apt install -y git curl unzip clang build-essential
 
 # Print the Ubuntu version. Useful when there are failing tests.
 RUN cat /etc/lsb-release
 
-# Invalidate the cache when flutter pushes a new commit.
-ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable
-
-RUN git clone https://github.com/flutter/flutter.git ${FLUTTER_HOME}
+$installFlutter
 
 RUN flutter doctor
 
 # Copy the whole repo, which makes it possible for one package to reference
 # other packages within a mono-repo.
 COPY ./ /golden_tester
-''';
+""";
   }
 
   /// Deletes the Docker image with the given [imageName].
@@ -376,6 +459,8 @@ COPY ./ /golden_tester
   }
 }
 
+String _join(String directory, String file) => "$directory${Platform.pathSeparator}$file";
+
 void _sendToStdOut(String output) {
   stdout.write(output);
 }
@@ -422,6 +507,8 @@ class FakeDocker implements Docker {
     String? dockerFilePath,
     required String imageName,
     String? pathToProjectRoot,
+    String? flutterVersion,
+    String? dockerignoreContent,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
@@ -431,7 +518,7 @@ class FakeDocker implements Docker {
   }
 
   @override
-  String _createVirtualDockerfile() {
+  String _createVirtualDockerfile({String? flutterVersion}) {
     throw UnimplementedError();
   }
 
