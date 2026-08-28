@@ -183,6 +183,9 @@ USER root
 
 RUN apt update
 
+# clang/build-essential are only needed if a package has a Dart native-asset build hook
+# (package:native_toolchain_c); drop them for a lighter image if none of yours do. golden_runner's
+# generated Dockerfile adds them only when needed, but this static reference always includes them.
 RUN apt install -y git curl unzip clang build-essential
 
 # Print the Ubuntu version. Useful when there are failing tests.
