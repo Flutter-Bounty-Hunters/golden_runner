@@ -122,6 +122,14 @@ all sources, `pubspec.yaml`/`pubspec.lock`, and test directories so a pub worksp
 golden_runner tells you when it applies the default, and it always **defers to a `.dockerignore` you
 already have** in the project. Add your own `.dockerignore` to fully control what's sent to Docker.
 
+## Native build hooks:
+Some packages ship a Dart native-asset build hook (`hook/build.dart`) that compiles native code
+during `flutter test` (via `package:native_toolchain_c`), which needs a C compiler in the container.
+golden_runner detects whether any resolved package has such a hook (from
+`.dart_tool/package_config.json`) and installs a C toolchain (`clang`, `build-essential`) in its
+built-in image **only when needed** — so projects without native hooks get a lighter, faster image.
+If it can't tell (e.g. no `.dart_tool/package_config.json`), it includes the toolchain to be safe.
+
 ## Clean golden failure artifacts:
 The `goldens` command must be run from the directory of the app/package under test.
 

@@ -5,6 +5,7 @@ import 'package:collection/collection.dart';
 import 'package:golden_runner/src/infrastructure/build_context.dart';
 import 'package:golden_runner/src/infrastructure/checkpoints.dart';
 import 'package:golden_runner/src/infrastructure/logging.dart';
+import 'package:golden_runner/src/infrastructure/native_assets.dart';
 
 /// Client to build a Docker Image and then run it in a Docker Container.
 class DockerGoldenContainer {
@@ -43,6 +44,13 @@ class DockerGoldenContainer {
       }
     }
 
+    // Only install a C toolchain (clang) in the built-in image when the project
+    // actually has a Dart native-asset build hook that needs it. Most projects
+    // don't, so they get a lighter, faster image. Errs toward including it.
+    final includeCToolchain =
+        request.dockerFilePath != null || const NativeAssetDetector().needsCToolchain(request.pathToProjectRoot);
+    GrLog.docker.info("Including C toolchain in image: $includeCToolchain");
+
     // Builds the image used to run the container. We can build the image
     // even if it already exists. Docker will cache each step used in the
     // Dockerfile, so subsequent builds will be faster.
@@ -57,6 +65,7 @@ class DockerGoldenContainer {
         pathToProjectRoot: request.pathToProjectRoot,
         flutterVersion: request.flutterVersion,
         dockerignoreContent: dockerignoreContent,
+        includeCToolchain: includeCToolchain,
         verbosity: request.dockerVerbosity,
       ),
     );
@@ -237,11 +246,12 @@ class Docker {
     String? pathToProjectRoot,
     String? flutterVersion,
     String? dockerignoreContent,
+    bool includeCToolchain = true,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     GrLog.docker.info(
-      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $pathToProjectRoot, flutter version: ${flutterVersion ?? "default"}",
+      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $pathToProjectRoot, flutter version: ${flutterVersion ?? "default"}, C toolchain: $includeCToolchain",
     );
 
     // For golden_runner's built-in Dockerfile, write it to a temp directory OUTSIDE
@@ -254,7 +264,10 @@ class Docker {
     if (dockerFilePath == null) {
       tempBuildDir = Directory.systemTemp.createTempSync("golden_runner_build");
       final dockerfile = File(_join(tempBuildDir.path, "golden_tester.Dockerfile"))
-        ..writeAsStringSync(_createVirtualDockerfile(flutterVersion: flutterVersion));
+        ..writeAsStringSync(_createVirtualDockerfile(
+          flutterVersion: flutterVersion,
+          includeCToolchain: includeCToolchain,
+        ));
       if (dockerignoreContent != null) {
         File("${dockerfile.path}.dockerignore").writeAsStringSync(dockerignoreContent);
       }
@@ -302,7 +315,7 @@ class Docker {
     }
   }
 
-  String _createVirtualDockerfile({String? flutterVersion}) {
+  String _createVirtualDockerfile({String? flutterVersion, bool includeCToolchain = true}) {
     // Choose how to install Flutter. When a version is pinned, check out that exact git ref
     // so the container's Flutter matches the project (and CI) - a mismatched SDK can fail to
     // compile dependencies or paint goldens differently. A pinned version never moves, so we
@@ -316,10 +329,13 @@ class Docker {
             "\n"
             "RUN git clone https://github.com/flutter/flutter.git \${FLUTTER_HOME}";
 
-    // git/curl/unzip are needed to fetch Flutter. clang and build-essential provide a C
-    // toolchain so packages with Dart native-asset build hooks (package:native_toolchain_c)
-    // can compile their native code inside the container. Without a compiler on PATH, such
-    // builds fail with "No compiler configured on host".
+    // git/curl/unzip are always needed to fetch Flutter. clang and build-essential provide a
+    // C toolchain, added only when the project has a Dart native-asset build hook
+    // (package:native_toolchain_c) that compiles native code during `flutter test`; without a
+    // compiler on PATH such builds fail with "No compiler configured on host". Projects with no
+    // native hooks get a lighter image without the toolchain.
+    final aptPackages = includeCToolchain ? "git curl unzip clang build-essential" : "git curl unzip";
+
     return """
 FROM ubuntu:latest
 
@@ -330,7 +346,7 @@ USER root
 
 RUN apt update
 
-RUN apt install -y git curl unzip clang build-essential
+RUN apt install -y $aptPackages
 
 # Print the Ubuntu version. Useful when there are failing tests.
 RUN cat /etc/lsb-release
@@ -509,6 +525,7 @@ class FakeDocker implements Docker {
     String? pathToProjectRoot,
     String? flutterVersion,
     String? dockerignoreContent,
+    bool includeCToolchain = true,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
@@ -518,7 +535,7 @@ class FakeDocker implements Docker {
   }
 
   @override
-  String _createVirtualDockerfile({String? flutterVersion}) {
+  String _createVirtualDockerfile({String? flutterVersion, bool includeCToolchain = true}) {
     throw UnimplementedError();
   }
 
