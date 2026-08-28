@@ -12,12 +12,14 @@ import 'package:meta/meta.dart';
 class DockerGoldenContainer {
   const DockerGoldenContainer();
 
-  Future<void> buildAndRun(RunDockerContainerRequest request) async {
+  /// Builds the image, runs the tests in a container, and cleans up, returning the
+  /// process exit code (0 on success; non-zero if the image build or the tests fail).
+  Future<int> buildAndRun(RunDockerContainerRequest request) async {
     // Print high-level progress with per-step timing, because a golden run can spend several
-    // minutes in each phase (especially building the image). Stay silent only when the caller
-    // asked for no output at all.
+    // minutes in each phase (especially building the image). Stay silent when the caller asked
+    // for silent mode, or for no Docker output at all.
     final checkpoints = GrCheckpoints(
-      enabled: request.dockerVerbosity != DockerVerbosity.none,
+      enabled: !request.silent && request.dockerVerbosity != DockerVerbosity.none,
       totalSteps: 3,
     );
 
@@ -27,8 +29,10 @@ class DockerGoldenContainer {
     // built-in Dockerfile, apply a sensible default `.dockerignore` for this build via
     // a Dockerfile-adjacent ignore file, so nothing is written into the user's project.
     // A user's own `.dockerignore` is always respected.
+    // Applies even in silent mode (it speeds up the build); only the message below
+    // is suppressed, since `checkpoints.info` is a no-op when checkpoints are off.
     String? dockerignoreContent;
-    if (request.dockerVerbosity != DockerVerbosity.none && request.dockerFilePath == null) {
+    if (request.dockerFilePath == null) {
       final assessment = await const BuildContextGuard().assess(request.pathToProjectRoot);
       if (assessment.decision == BuildContextIgnoreDecision.applyDefault) {
         dockerignoreContent = BuildContextGuard.defaultDockerignore;
@@ -58,7 +62,7 @@ class DockerGoldenContainer {
     final buildingImageLabel = request.flutterVersion != null
         ? "Building Docker image (Flutter ${request.flutterVersion})"
         : "Building Docker image";
-    await checkpoints.step(
+    final buildExitCode = await checkpoints.step(
       buildingImageLabel,
       () => Docker.instance.buildImage(
         dockerFilePath: request.dockerFilePath,
@@ -71,28 +75,34 @@ class DockerGoldenContainer {
       ),
     );
 
-    // Runs the Docker container, which then runs the Flutter test command internally.
-    await checkpoints.step(
-      "Running golden tests in container",
-      () => Docker.instance.runContainer(
-        imageName: request.dockerImageName,
+    // Runs the Docker container (which runs `flutter test` internally), unless the
+    // image build already failed. In silent mode the container's stdout is dropped
+    // but its stderr (errors) still surfaces.
+    var testExitCode = buildExitCode;
+    if (buildExitCode == 0) {
+      testExitCode = await checkpoints.step(
+        "Running golden tests in container",
+        () => Docker.instance.runContainer(
+          imageName: request.dockerImageName,
 
-        // (Maybe) mounted part of the host machine with the Container so the Container can alter
-        // the host machine.
-        mountPaths: request.mountPaths,
+          // (Maybe) mounted part of the host machine with the Container so the Container can alter
+          // the host machine.
+          mountPaths: request.mountPaths,
 
-        // Within the container, set the working directory to the place where the image
-        // copied the project into the container.
-        workingDirectory: request.containerWorkingDirectory,
+          // Within the container, set the working directory to the place where the image
+          // copied the project into the container.
+          workingDirectory: request.containerWorkingDirectory,
 
-        // The CLI command that runs in the Container. This where all the interesting stuff happens.
-        commandToRun: request.command,
+          // The CLI command that runs in the Container. This where all the interesting stuff happens.
+          commandToRun: request.command,
 
-        verbosity: request.dockerVerbosity,
-      ),
-    );
+          silent: request.silent,
+          verbosity: request.dockerVerbosity,
+        ),
+      );
+    }
 
-    // After running, we don't need the image anymore. Remove it.
+    // After running, we don't need the image anymore. Remove it (even on failure).
     await checkpoints.step(
       "Removing Docker image",
       () => Docker.instance.deleteImage(
@@ -102,6 +112,8 @@ class DockerGoldenContainer {
     );
 
     checkpoints.done();
+
+    return testExitCode;
   }
 }
 
@@ -110,6 +122,7 @@ class RunDockerContainerRequest {
     this.dockerFilePath,
     required this.dockerImageName,
     required this.dockerVerbosity,
+    this.silent = false,
     this.flutterVersion,
     this.mountPaths = const {},
     this.pathToProjectRoot = ".",
@@ -140,6 +153,10 @@ class RunDockerContainerRequest {
   /// However, this package does its best to get as close to the requested verbosity
   /// as possible.
   final DockerVerbosity dockerVerbosity;
+
+  /// Whether to run silently: suppress all progress output while still surfacing
+  /// errors (stderr, including from the container) and a failing exit code.
+  final bool silent;
 
   /// The Flutter version (a git ref of the flutter/flutter repo, e.g., `"3.44.6"` or `"stable"`)
   /// to install in golden_runner's built-in Dockerfile.
@@ -176,6 +193,7 @@ class RunDockerContainerRequest {
           dockerFilePath == other.dockerFilePath &&
           dockerImageName == other.dockerImageName &&
           dockerVerbosity == other.dockerVerbosity &&
+          silent == other.silent &&
           flutterVersion == other.flutterVersion &&
           pathToProjectRoot == other.pathToProjectRoot &&
           containerWorkingDirectory == other.containerWorkingDirectory &&
@@ -187,6 +205,7 @@ class RunDockerContainerRequest {
         dockerFilePath,
         dockerImageName,
         dockerVerbosity,
+        silent,
         flutterVersion,
         const DeepCollectionEquality().hash(mountPaths),
         pathToProjectRoot,
@@ -374,6 +393,7 @@ class Docker {
     Set<String> mountPaths = const {},
     String? workingDirectory,
     required List<String> commandToRun,
+    bool silent = false,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
@@ -386,10 +406,10 @@ class Docker {
       'run',
       // Remove the container when it exits.
       '--rm',
-      // Run as an interactive (i) terminal (t). Running as a terminal retains color
-      // formatting. Making it interactive allows lines to be replaced so that a single test
-      // doesn't produce dozens of the same line of output over time.
-      '-it',
+      // Run as an interactive (i) terminal (t) for a nicer live display: color formatting, and
+      // line replacement so a single test doesn't spam dozens of lines. A TTY needs inherited
+      // stdio, so we can't use it in silent mode (where we pipe and filter the streams instead).
+      if (!silent) '-it',
       if (verbosity != DockerVerbosity.standard) //
         '--log-driver=none',
       // If desired, mount some paths from the host machine into the container to share
@@ -409,16 +429,18 @@ class Docker {
     ];
     GrLog.docker.fine("Run arguments: $args");
 
-    final process = await Process.start(
-      'docker',
-      args,
-      // Must inherit stdio to be able to configure the command as an interactive terminal.
-      // If we pipe streams instead of inheriting, we can still operate as a terminal (-t),
-      // but we get an error when trying interactive (-i).
-      mode: ProcessStartMode.inheritStdio,
-    );
-
-    final exitCode = await process.exitCode;
+    final ExitCode exitCode;
+    if (silent) {
+      // Silent mode: buffer the container's stdout and only print it if the run fails, so a
+      // failing golden test still shows its failure summary (and CI logs aren't a silent
+      // success). stderr is always forwarded so errors surface live.
+      final process = await Process.start('docker', args);
+      exitCode = await consumeSilently(process);
+    } else {
+      // Inherit stdio so the run behaves as an interactive terminal (needed for `-it`).
+      final process = await Process.start('docker', args, mode: ProcessStartMode.inheritStdio);
+      exitCode = await process.exitCode;
+    }
 
     if (exitCode != 0 && throwOnError) {
       throw Exception(
@@ -488,6 +510,34 @@ COPY ./ /golden_tester
 """;
 }
 
+/// Consumes a [process]'s output for silent mode.
+///
+/// stderr is forwarded live via [onStderr] (default: this process's stderr), so errors
+/// always surface. stdout is buffered and, **only if the process exits non-zero**, written
+/// via [onStdout] (default: this process's stdout) - so a failing run (e.g. a golden test
+/// failure) still shows its output, while a successful run stays silent. Returns the exit code.
+@visibleForTesting
+Future<int> consumeSilently(
+  Process process, {
+  void Function(String)? onStdout,
+  void Function(String)? onStderr,
+}) async {
+  final writeStdout = onStdout ?? stdout.write;
+  final writeStderr = onStderr ?? stderr.write;
+
+  final bufferedStdout = StringBuffer();
+  await Future.wait([
+    process.stdout.transform(utf8.decoder).forEach(bufferedStdout.write),
+    process.stderr.transform(utf8.decoder).forEach(writeStderr),
+  ]);
+
+  final exitCode = await process.exitCode;
+  if (exitCode != 0 && bufferedStdout.isNotEmpty) {
+    writeStdout(bufferedStdout.toString());
+  }
+  return exitCode;
+}
+
 void _sendToStdOut(String output) {
   stdout.write(output);
 }
@@ -506,11 +556,20 @@ class FakeDocker implements Docker {
   FakeDocker({
     bool isInstalled = true,
     bool isRunning = true,
+    int buildImageExitCode = 0,
+    int runContainerExitCode = 0,
   })  : _isInstalled = isInstalled,
-        _isRunning = isRunning;
+        _isRunning = isRunning,
+        _buildImageExitCode = buildImageExitCode,
+        _runContainerExitCode = runContainerExitCode;
 
   final bool _isInstalled;
   final bool _isRunning;
+  final int _buildImageExitCode;
+  final int _runContainerExitCode;
+
+  /// Records whether the most recent `runContainer` call requested silent mode.
+  bool? lastRunWasSilent;
 
   final _images = <String>{};
 
@@ -542,7 +601,7 @@ class FakeDocker implements Docker {
   }) async {
     _incrementCallCount("buildImage");
     _images.add(imageName);
-    return 0;
+    return _buildImageExitCode;
   }
 
   @override
@@ -562,11 +621,13 @@ class FakeDocker implements Docker {
     Set<String> mountPaths = const {},
     String? workingDirectory,
     required List<String> commandToRun,
+    bool silent = false,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     _incrementCallCount("runContainer");
-    return 0;
+    lastRunWasSilent = silent;
+    return _runContainerExitCode;
   }
 
   void _incrementCallCount(String methodName) {

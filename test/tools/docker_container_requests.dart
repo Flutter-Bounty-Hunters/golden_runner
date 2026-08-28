@@ -44,6 +44,12 @@ class _RunDockerContainerRequestMatcher extends Matcher {
     );
     _addMismatch(
       mismatches,
+      "silent",
+      _expected.silent,
+      item.silent,
+    );
+    _addMismatch(
+      mismatches,
       "flutterVersion",
       _expected.flutterVersion,
       item.flutterVersion,

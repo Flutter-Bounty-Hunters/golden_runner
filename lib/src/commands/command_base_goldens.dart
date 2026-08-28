@@ -177,7 +177,7 @@ abstract class GoldensCommand extends DockerContainerCommand {
       if (fvmVersion != null) {
         useFlutterVersionIfUnset(fvmVersion);
         GrLog.commands.fine("Inferred Flutter version '$fvmVersion' from FVM config");
-        if (dockerVerbosity != DockerVerbosity.none) {
+        if (!silent && dockerVerbosity != DockerVerbosity.none) {
           // ignore: avoid_print
           print("[golden_runner] ℹ Using Flutter '$fvmVersion', inferred from your project's FVM config.");
         }

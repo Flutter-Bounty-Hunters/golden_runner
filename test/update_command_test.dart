@@ -372,6 +372,57 @@ void main() {
       });
     });
 
+    group("verbosity >", () {
+      UpdateGoldensCommand command() => UpdateGoldensCommand(
+            environment: FakeGoldensCommandEnvironment(currentDirectoryPath: "/workspace/my_app"),
+          );
+
+      test("defaults to normal: not silent, errors-only Docker output", () {
+        final c = command()..parseArguments([]);
+        expect(c.silent, isFalse);
+        expect(c.dockerVerbosity, DockerVerbosity.errorOnly);
+      });
+
+      test("--silent enables silent mode, keeping errors-only Docker output", () {
+        final c = command()..parseArguments(["--silent"]);
+        expect(c.silent, isTrue);
+        expect(c.dockerVerbosity, DockerVerbosity.errorOnly);
+        // --silent is consumed, never forwarded to `flutter test`.
+        expect(c.command, isNot(contains("--silent")));
+      });
+
+      test("--verbose enables max Docker output and is forwarded to flutter test", () {
+        final c = command()..parseArguments(["--verbose"]);
+        expect(c.silent, isFalse);
+        expect(c.dockerVerbosity, DockerVerbosity.standard);
+        // --verbose stays in the args so `flutter test` is also verbose.
+        expect(c.command, contains("--verbose"));
+      });
+
+      test("-v behaves like --verbose", () {
+        final c = command()..parseArguments(["-v"]);
+        expect(c.dockerVerbosity, DockerVerbosity.standard);
+        expect(c.command, contains("-v"));
+      });
+
+      test("an explicit --docker-verbosity overrides the derived level", () {
+        final c = command()..parseArguments(["--verbose", "--docker-verbosity", "quiet"]);
+        expect(c.dockerVerbosity, DockerVerbosity.quiet);
+      });
+
+      test("throws when combining --silent and --verbose", () {
+        expect(
+          () => command().parseArguments(["--silent", "--verbose"]),
+          throwsA(predicate((Object e) => e.toString().contains("Cannot combine"))),
+        );
+      });
+
+      test("the request carries the silent flag", () {
+        final c = command()..parseArguments(["--silent"]);
+        expect(c.assembleDockerContainerRequest().silent, isTrue);
+      });
+    });
+
     group("directory mapping >", () {
       test("default - single project repository", () {
         final command = UpdateGoldensCommand(

@@ -1,3 +1,5 @@
+import 'dart:io' as io;
+
 import 'package:golden_runner/src/commands/command_base.dart';
 import 'package:golden_runner/src/infrastructure/arguments.dart';
 import 'package:golden_runner/src/infrastructure/docker/docker_client.dart';
@@ -9,6 +11,13 @@ abstract class DockerContainerCommand implements Command {
   static const argDockerImageName = "--docker-image-name";
   static const argDockerVerbosity = "--docker-verbosity";
   static const argFlutterVersion = "--flutter-version";
+
+  /// Verbosity flags. `--silent` suppresses all normal output (but still surfaces
+  /// errors and a failing exit code); `--verbose`/`-v` turns on maximum output,
+  /// including fine-grained debug logs.
+  static const argSilent = "--silent";
+  static const argVerbose = "--verbose";
+  static const argVerboseShort = "-v";
 
   static const defaultDockerImageName = "golden_tester";
   static const defaultDockerVerbosity = DockerVerbosity.errorOnly;
@@ -27,6 +36,14 @@ abstract class DockerContainerCommand implements Command {
   @visibleForTesting
   DockerVerbosity get dockerVerbosity => _dockerVerbosity!;
   DockerVerbosity? _dockerVerbosity;
+
+  /// Whether the command is running in silent mode (`--silent`): no progress
+  /// output, but errors (including from sub-processes) and a failing exit code
+  /// still surface.
+  @protected
+  @visibleForTesting
+  bool get silent => _silent;
+  bool _silent = false;
 
   /// The Flutter version to install in the Docker Container, e.g., `"3.44.6"`, `"stable"`,
   /// or any git ref (tag/branch/commit) of the flutter/flutter repository.
@@ -86,17 +103,42 @@ abstract class DockerContainerCommand implements Command {
 
     _dockerImageName = parseArgumentOption(arguments, argDockerImageName) ?? defaultDockerImageName;
 
-    _dockerVerbosity =
-        DockerVerbosity.maybeParse(parseArgumentOption(arguments, argDockerVerbosity)) ?? defaultDockerVerbosity;
+    _resolveVerbosity(arguments);
 
     _flutterVersion = parseArgumentOption(arguments, argFlutterVersion);
   }
 
+  /// Resolves [dockerVerbosity] and [silent] from the verbosity flags.
+  ///
+  /// `--silent` and `--verbose`/`-v` are the primary controls; an explicit
+  /// `--docker-verbosity` is an advanced override of the Docker passthrough level.
+  /// `--silent` is consumed (never forwarded to `flutter test`); `--verbose`/`-v`
+  /// is left in place so it also reaches `flutter test`.
+  void _resolveVerbosity(List<String> arguments) {
+    final explicitDockerVerbosity = DockerVerbosity.maybeParse(parseArgumentOption(arguments, argDockerVerbosity));
+    final wantsSilent = parseArgumentFlag(arguments, argSilent);
+    final wantsVerbose = hasArgumentFlag(arguments, [argVerbose, argVerboseShort]);
+
+    if (wantsSilent && wantsVerbose) {
+      throw Exception("Cannot combine $argSilent with $argVerbose/$argVerboseShort - choose one verbosity level.");
+    }
+
+    _silent = wantsSilent;
+    _dockerVerbosity = explicitDockerVerbosity ??
+        (wantsVerbose ? DockerVerbosity.standard : defaultDockerVerbosity /* errorOnly - keeps errors, hides chatter */);
+  }
+
   @override
   Future<void> run() async {
-    await DockerGoldenContainer().buildAndRun(
+    final exitCode = await DockerGoldenContainer().buildAndRun(
       assembleDockerContainerRequest(),
     );
+
+    // Propagate a non-zero result (image build failure or failing tests) so the
+    // process fails - important for CI, especially in silent mode.
+    if (exitCode != 0) {
+      io.exitCode = exitCode;
+    }
   }
 
   /// Uses parsed arguments to assemble a [RunDockerContainerRequest], which is then used to tell Docker how to
@@ -111,6 +153,7 @@ abstract class DockerContainerCommand implements Command {
         dockerImageName: dockerImageName,
         dockerFilePath: dockerFilePath,
         dockerVerbosity: dockerVerbosity,
+        silent: silent,
         flutterVersion: flutterVersion,
         mountPaths: mountPaths,
         pathToProjectRoot: pathToProjectRoot,

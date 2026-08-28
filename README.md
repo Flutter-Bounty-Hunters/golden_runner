@@ -127,6 +127,28 @@ container's Flutter to it automatically.
 
 An explicit `--flutter-version` always overrides this.
 
+## Output verbosity
+By default, `golden_runner` prints high-level progress (build → test → cleanup, with per-step timing),
+any errors, and streams `flutter test` output.
+
+Two flags adjust this:
+
+```
+# Silent — for CI. Suppresses normal output on success, but on failure it surfaces the container's
+# output (the golden test failure summary) and errors, and exits non-zero — so CI fails loudly.
+goldens update --silent
+
+# Verbose — maximum detail for debugging: full Docker build logs, fine-grained internal
+# debug logs, and verbose `flutter test` output.
+goldens test --verbose   # or -v
+```
+
+`golden_runner` exits non-zero when the image build fails or the golden tests fail, so a failing run
+fails your CI job — including in `--silent` mode.
+
+For fine-grained control of just the Docker passthrough, `--docker-verbosity <standard|quiet|error|none>`
+overrides the level derived from the flags above.
+
 ## Large projects and the build context
 `golden_runner` copies your project into the Docker image to run tests. Without a `.dockerignore`,
 the *entire* directory — including generated output like `build/` and `.dart_tool/`, plus `.git` —
