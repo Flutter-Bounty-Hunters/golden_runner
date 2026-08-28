@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:golden_runner/src/commands/command_docker_container.dart';
 import 'package:golden_runner/src/infrastructure/arguments.dart';
+import 'package:golden_runner/src/infrastructure/docker/docker_client.dart';
+import 'package:golden_runner/src/infrastructure/fvm.dart';
 import 'package:golden_runner/src/infrastructure/logging.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
@@ -161,6 +163,26 @@ abstract class GoldensCommand extends DockerContainerCommand {
       from: projectRootPath,
     );
     _packageDirectory = path.basename(currentDirectoryPath);
+
+    // If no explicit --flutter-version was passed, pin the container's Flutter to
+    // the project's FVM configuration (.fvmrc), walking up from the package to the
+    // project root, so goldens match the developer's local (and CI) SDK. An explicit
+    // --flutter-version always wins.
+    if (flutterVersion == null) {
+      final fvmVersion = const FvmVersionResolver().resolve(
+        currentDirectoryPath,
+        projectRootPath,
+        readFile: _environment.readFileAsString,
+      );
+      if (fvmVersion != null) {
+        useFlutterVersionIfUnset(fvmVersion);
+        GrLog.commands.fine("Inferred Flutter version '$fvmVersion' from FVM config");
+        if (dockerVerbosity != DockerVerbosity.none) {
+          // ignore: avoid_print
+          print("[golden_runner] ℹ Using Flutter '$fvmVersion', inferred from your project's FVM config.");
+        }
+      }
+    }
 
     // Fail early (before building any Docker image) if this package belongs to a
     // Dart pub workspace whose root won't be copied into the container. Without

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:golden_runner/golden_runner.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
@@ -111,6 +113,88 @@ void main() {
 
         expect(command.flutterVersion, null);
         expect(command.assembleDockerContainerRequest().flutterVersion, null);
+      });
+
+      test("auto-detects the Flutter version from FVM config (.fvmrc)", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              // .fvmrc at the project root, above the package under test.
+              "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+            },
+          ),
+        )..parseArguments([
+            "--path-to-project-root",
+            "../..",
+          ]);
+
+        expect(command.flutterVersion, "3.44.6");
+        expect(command.assembleDockerContainerRequest().flutterVersion, "3.44.6");
+      });
+
+      test("logs that the Flutter version was inferred from FVM", () {
+        final logs = <String>[];
+        runZoned(
+          () {
+            UpdateGoldensCommand(
+              environment: FakeGoldensCommandEnvironment(
+                currentDirectoryPath: "/workspace/repo/packages/my_app",
+                fileContents: {
+                  "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+                },
+              ),
+            ).parseArguments(["--path-to-project-root", "../.."]);
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => logs.add(line),
+          ),
+        );
+
+        expect(
+          logs.any((line) => line.contains("FVM") && line.contains("3.44.6")),
+          isTrue,
+          reason: "expected a log line mentioning FVM and the inferred version; got: $logs",
+        );
+      });
+
+      test("does not log FVM inference when the version is explicit", () {
+        final logs = <String>[];
+        runZoned(
+          () {
+            UpdateGoldensCommand(
+              environment: FakeGoldensCommandEnvironment(
+                currentDirectoryPath: "/workspace/repo/packages/my_app",
+                fileContents: {
+                  "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+                },
+              ),
+            ).parseArguments(["--path-to-project-root", "../..", "--flutter-version", "stable"]);
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => logs.add(line),
+          ),
+        );
+
+        expect(logs.any((line) => line.contains("FVM")), isFalse);
+      });
+
+      test("explicit --flutter-version overrides FVM config", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+            },
+          ),
+        )..parseArguments([
+            "--path-to-project-root",
+            "../..",
+            "--flutter-version",
+            "stable",
+          ]);
+
+        expect(command.flutterVersion, "stable");
       });
 
       test("handles named arguments when there's no specified test directory", () {

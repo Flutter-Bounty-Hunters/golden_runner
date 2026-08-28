@@ -42,6 +42,12 @@ abstract class DockerContainerCommand implements Command {
   String? get flutterVersion => _flutterVersion;
   String? _flutterVersion;
 
+  /// Sets the Flutter version to [version] only if one wasn't already provided via
+  /// [argFlutterVersion], so an explicit `--flutter-version` always wins over an
+  /// auto-detected default (e.g. from FVM config).
+  @protected
+  void useFlutterVersionIfUnset(String version) => _flutterVersion ??= version;
+
   /// Docker mount paths from the host machine into the Docker Container, which allows the Docker Container
   /// to alter the host file system.
   ///

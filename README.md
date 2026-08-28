@@ -106,6 +106,12 @@ goldens test --flutter-version stable
 This applies to golden_runner's built-in Dockerfile. When you provide your own Dockerfile with
 `--docker-file-path`, that Dockerfile controls the Flutter version.
 
+### FVM projects
+If your project uses [FVM](https://fvm.app), you don't need to pass `--flutter-version` at all.
+golden_runner reads the pinned version from your FVM config — `.fvmrc` (or legacy
+`.fvm/fvm_config.json`) — walking up from the package under test to the project root, and pins the
+container's Flutter to it automatically. An explicit `--flutter-version` always overrides this.
+
 ## Large projects and the build context:
 golden_runner copies your project into the Docker image to run tests. Without a `.dockerignore`,
 the *entire* directory — including generated output like `build/` and `.dart_tool/`, plus `.git` —
