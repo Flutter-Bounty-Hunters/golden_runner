@@ -6,6 +6,7 @@ import 'package:golden_runner/src/infrastructure/build_context.dart';
 import 'package:golden_runner/src/infrastructure/checkpoints.dart';
 import 'package:golden_runner/src/infrastructure/logging.dart';
 import 'package:golden_runner/src/infrastructure/native_assets.dart';
+import 'package:meta/meta.dart';
 
 /// Client to build a Docker Image and then run it in a Docker Container.
 class DockerGoldenContainer {
@@ -264,7 +265,7 @@ class Docker {
     if (dockerFilePath == null) {
       tempBuildDir = Directory.systemTemp.createTempSync("golden_runner_build");
       final dockerfile = File(_join(tempBuildDir.path, "golden_tester.Dockerfile"))
-        ..writeAsStringSync(_createVirtualDockerfile(
+        ..writeAsStringSync(createGoldenTesterDockerfile(
           flutterVersion: flutterVersion,
           includeCToolchain: includeCToolchain,
         ));
@@ -313,52 +314,6 @@ class Docker {
     } finally {
       tempBuildDir?.deleteSync(recursive: true);
     }
-  }
-
-  String _createVirtualDockerfile({String? flutterVersion, bool includeCToolchain = true}) {
-    // Choose how to install Flutter. When a version is pinned, check out that exact git ref
-    // so the container's Flutter matches the project (and CI) - a mismatched SDK can fail to
-    // compile dependencies or paint goldens differently. A pinned version never moves, so we
-    // let Docker cache the clone layer. Otherwise, fall back to the default branch and use the
-    // GitHub refs endpoint to bust the cache whenever Flutter pushes a new commit.
-    final installFlutter = flutterVersion != null
-        ? "# Clone the pinned Flutter version so the container matches the project (and CI).\n"
-            "RUN git clone https://github.com/flutter/flutter.git --branch $flutterVersion \${FLUTTER_HOME}"
-        : "# Invalidate the cache when flutter pushes a new commit.\n"
-            "ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable\n"
-            "\n"
-            "RUN git clone https://github.com/flutter/flutter.git \${FLUTTER_HOME}";
-
-    // git/curl/unzip are always needed to fetch Flutter. clang and build-essential provide a
-    // C toolchain, added only when the project has a Dart native-asset build hook
-    // (package:native_toolchain_c) that compiles native code during `flutter test`; without a
-    // compiler on PATH such builds fail with "No compiler configured on host". Projects with no
-    // native hooks get a lighter image without the toolchain.
-    final aptPackages = includeCToolchain ? "git curl unzip clang build-essential" : "git curl unzip";
-
-    return """
-FROM ubuntu:latest
-
-ENV FLUTTER_HOME=\${HOME}/sdks/flutter
-ENV PATH \${PATH}:\${FLUTTER_HOME}/bin:\${FLUTTER_HOME}/bin/cache/dart-sdk/bin
-
-USER root
-
-RUN apt update
-
-RUN apt install -y $aptPackages
-
-# Print the Ubuntu version. Useful when there are failing tests.
-RUN cat /etc/lsb-release
-
-$installFlutter
-
-RUN flutter doctor
-
-# Copy the whole repo, which makes it possible for one package to reference
-# other packages within a mono-repo.
-COPY ./ /golden_tester
-""";
   }
 
   /// Deletes the Docker image with the given [imageName].
@@ -477,6 +432,62 @@ COPY ./ /golden_tester
 
 String _join(String directory, String file) => "$directory${Platform.pathSeparator}$file";
 
+/// Builds golden_runner's built-in ("virtual") Dockerfile.
+///
+/// When [flutterVersion] is provided, the container clones that exact git ref
+/// (tag/branch/commit) of flutter/flutter, so the SDK matches the project (and CI)
+/// - a pinned version never moves, so Docker caches the clone layer.
+///
+/// When [flutterVersion] is `null`, the container tracks Flutter's **stable**
+/// channel: it clones `--branch stable`, and an `ADD` of stable's git ref busts the
+/// Docker cache whenever stable advances, so the clone picks up new stable releases.
+/// (For strict reproducibility, pass a specific version instead.)
+///
+/// [includeCToolchain] adds a C toolchain (clang, build-essential), needed only for
+/// projects with a Dart native-asset build hook (package:native_toolchain_c).
+@visibleForTesting
+String createGoldenTesterDockerfile({String? flutterVersion, bool includeCToolchain = true}) {
+  final installFlutter = flutterVersion != null
+      ? "# Clone the pinned Flutter version so the container matches the project (and CI).\n"
+          "RUN git clone https://github.com/flutter/flutter.git --branch $flutterVersion \${FLUTTER_HOME}"
+      : "# Default to Flutter's stable channel. The ADD busts the Docker cache whenever stable\n"
+          "# advances, so the clone below picks up new stable releases.\n"
+          "ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable\n"
+          "\n"
+          "RUN git clone https://github.com/flutter/flutter.git --branch stable \${FLUTTER_HOME}";
+
+  // git/curl/unzip are always needed to fetch Flutter. clang and build-essential provide a
+  // C toolchain, added only when the project has a Dart native-asset build hook
+  // (package:native_toolchain_c) that compiles native code during `flutter test`; without a
+  // compiler on PATH such builds fail with "No compiler configured on host". Projects with no
+  // native hooks get a lighter image without the toolchain.
+  final aptPackages = includeCToolchain ? "git curl unzip clang build-essential" : "git curl unzip";
+
+  return """
+FROM ubuntu:latest
+
+ENV FLUTTER_HOME=\${HOME}/sdks/flutter
+ENV PATH \${PATH}:\${FLUTTER_HOME}/bin:\${FLUTTER_HOME}/bin/cache/dart-sdk/bin
+
+USER root
+
+RUN apt update
+
+RUN apt install -y $aptPackages
+
+# Print the Ubuntu version. Useful when there are failing tests.
+RUN cat /etc/lsb-release
+
+$installFlutter
+
+RUN flutter doctor
+
+# Copy the whole repo, which makes it possible for one package to reference
+# other packages within a mono-repo.
+COPY ./ /golden_tester
+""";
+}
+
 void _sendToStdOut(String output) {
   stdout.write(output);
 }
@@ -532,11 +543,6 @@ class FakeDocker implements Docker {
     _incrementCallCount("buildImage");
     _images.add(imageName);
     return 0;
-  }
-
-  @override
-  String _createVirtualDockerfile({String? flutterVersion, bool includeCToolchain = true}) {
-    throw UnimplementedError();
   }
 
   @override

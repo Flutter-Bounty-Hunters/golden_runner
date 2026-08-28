@@ -38,7 +38,7 @@ This approach isn't perfect. Sometimes there are still mismatches between the go
 by the Ubuntu Docker container vs the goldens painted by the GitHub Ubuntu runner. However, we've
 found that this approach greatly reduces such mismatches.
 
-## Activate the package:
+## Activate the package
 To use the `goldens` command, you must first activate the `golden_runner` package.
 
 Activate from Pub:
@@ -53,7 +53,7 @@ Or, activate from local source:
     # From within the `golden_runner` directory:
     dart pub global activate --source path .
 
-## Run golden tests:
+## Run golden tests
 The `goldens` command must be run from the directory of the app/package under test.
 
 ```
@@ -70,7 +70,16 @@ goldens test test_goldens/my_dir
 goldens test --plain-name="something" test_goldens/my_dir
 ```
 
-## Update golden files:
+Projects that live in a mono-repo/workspace need to specify the path to the root of the
+workspace.
+
+```
+# Assume this project sits in ./packages/app_under_test, so the root is up two
+# directories: ../..
+goldens test --path-to-project-root ../..
+```
+
+## Update golden files
 The `goldens` command must be run from the directory of the app/package under test.
 
 ```
@@ -87,57 +96,74 @@ goldens update --plain-name="something"
 goldens update --plain-name "something" test_goldens/my_dir
 ```
 
-## Pin the Flutter version:
-By default, golden_runner's built-in Dockerfile installs Flutter from its default branch. If your
-project (or one of its dependencies) only builds against a specific Flutter SDK, a mismatched
-version can fail to compile, or paint goldens differently than your project and CI.
-
-Pin the container's Flutter version with `--flutter-version`, passing any git ref of the
-`flutter/flutter` repo (a release tag, a channel, or a commit):
+Projects that live in a mono-repo/workspace need to specify the path to the root of the
+workspace.
 
 ```
-# Pin to a release tag (matches an FVM `.fvmrc` pin, for example).
+# Assume this project sits in ./packages/app_under_test, so the root is up two
+# directories: ../..
+goldens update --path-to-project-root ../..
+```
+
+## Specific Flutter Version
+By default, `golden_runner` uses the latest Flutter `stable` version. To use a different version,
+use the `--flutter-version` flag.
+
+```
 goldens update --flutter-version 3.44.6
 
-# Pin a channel.
-goldens test --flutter-version stable
+goldens test --flutter-version beta
 ```
 
-This applies to golden_runner's built-in Dockerfile. When you provide your own Dockerfile with
-`--docker-file-path`, that Dockerfile controls the Flutter version.
+If you provide your own custom Dockerfile, this flag is ignored and you'll need to specify the
+desired Flutter version, yourself.
 
 ### FVM projects
 If your project uses [FVM](https://fvm.app), you don't need to pass `--flutter-version` at all.
-golden_runner reads the pinned version from your FVM config — `.fvmrc` (or legacy
-`.fvm/fvm_config.json`) — walking up from the package under test to the project root, and pins the
-container's Flutter to it automatically. An explicit `--flutter-version` always overrides this.
 
-## Large projects and the build context:
-golden_runner copies your project into the Docker image to run tests. Without a `.dockerignore`,
+The `golden_runner` CLI reads the pinned version from your FVM config — `.fvmrc` (or legacy
+`.fvm/fvm_config.json`) — walking up from the package under test to the project root, and pins the
+container's Flutter to it automatically. 
+
+An explicit `--flutter-version` always overrides this.
+
+## Large projects and the build context
+`golden_runner` copies your project into the Docker image to run tests. Without a `.dockerignore`,
 the *entire* directory — including generated output like `build/` and `.dart_tool/`, plus `.git` —
 is sent to Docker and copied into the image on every run, which can add many minutes to each build
 (especially in a mono-repo).
 
 To avoid this, when the build context is large (2 GiB or more) and has no `.dockerignore`,
-golden_runner applies a sensible default Flutter/Dart `.dockerignore` **for that build only** — it's
-written next to golden_runner's generated Dockerfile in a temp directory (a Dockerfile-adjacent
-ignore file that BuildKit honors), so **no file is written into your project**. The default excludes
-generated output that the container regenerates anyway (it runs its own `flutter pub get`), and keeps
-all sources, `pubspec.yaml`/`pubspec.lock`, and test directories so a pub workspace still resolves.
+`golden_runner` applies a sensible default Flutter/Dart `.dockerignore`, **for that build only**,
+which reduces the amount of data that needs to be copied. The `.dockerignore`. file is written next 
+to golden_runner's generated Dockerfile in a temp directory, so **no file is written into your 
+project**. 
 
-golden_runner tells you when it applies the default, and it always **defers to a `.dockerignore` you
-already have** in the project. Add your own `.dockerignore` to fully control what's sent to Docker.
+The default `.dockerignore` excludes generated output that the container regenerates anyway, and 
+keeps all sources, `pubspec.yaml`/`pubspec.lock`, and test directories so a pub workspace still 
+resolves.
 
-## Native build hooks:
+`golden_runner` tells you when it applies the default, and it always **defers to a `.dockerignore` 
+you already have** in the project. Add your own `.dockerignore` to fully control what's sent to 
+Docker.
+
+## Native build hooks
 Some packages ship a Dart native-asset build hook (`hook/build.dart`) that compiles native code
 during `flutter test` (via `package:native_toolchain_c`), which needs a C compiler in the container.
-golden_runner detects whether any resolved package has such a hook (from
+
+To support native asset compilation, `clang` must be added to the Docker image, but `clang` is
+otherwise not required.
+
+`golden_runner` detects whether any resolved package has such a hook (from
 `.dart_tool/package_config.json`) and installs a C toolchain (`clang`, `build-essential`) in its
-built-in image **only when needed** — so projects without native hooks get a lighter, faster image.
+built-in image **only when needed**, so projects without native hooks get a lighter, faster image.
 If it can't tell (e.g. no `.dart_tool/package_config.json`), it includes the toolchain to be safe.
 
-## Clean golden failure artifacts:
-The `goldens` command must be run from the directory of the app/package under test.
+## Clean golden failure artifacts
+Golden failures produce a lot of new files, which are only needed while fixing/updating code.
+It can be a big pain to delete all of these failure files strewn about a codebase.
+
+`golden_runner` provides a `clean` command, which attempts to find and delete all such files.
 
 By default, `goldens clean` deletes directories named `failures` under `test_goldens`.
 
