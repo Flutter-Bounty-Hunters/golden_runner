@@ -18,35 +18,16 @@ void main() {
       }
     });
 
-    /// Writes a `.dart_tool/package_config.json` listing [packageRootUris] (each a
-    /// `rootUri` relative to `.dart_tool/`).
-    void writePackageConfig(List<String> packageRootUris) {
-      final packages = packageRootUris
-          .asMap()
-          .entries
-          .map((e) => '{"name": "pkg${e.key}", "rootUri": "${e.value}", "packageUri": "lib/"}')
-          .join(",\n    ");
-      File(path.join(projectRoot.path, ".dart_tool", "package_config.json"))
-        ..createSync(recursive: true)
-        ..writeAsStringSync('{\n  "configVersion": 2,\n  "packages": [\n    $packages\n  ]\n}');
-    }
-
-    void writeBuildHook(String packageDirRelativeToRoot) {
-      File(path.join(projectRoot.path, packageDirRelativeToRoot, "hook", "build.dart"))
-        ..createSync(recursive: true)
-        ..writeAsStringSync("void main() {}");
-    }
-
     test("needs a toolchain when a package has a hook/build.dart", () {
       // Two packages; the second has a native-asset build hook.
-      writePackageConfig(["../", "../packages/native_audio"]);
-      writeBuildHook("packages/native_audio");
+      _writePackageConfig(projectRoot, ["../", "../packages/native_audio"]);
+      _writeBuildHook(projectRoot, "packages/native_audio");
 
       expect(const NativeAssetDetector().needsCToolchain(projectRoot.path), isTrue);
     });
 
     test("does NOT need a toolchain when no package has a build hook", () {
-      writePackageConfig(["../", "../packages/chat", "../packages/data_model"]);
+      _writePackageConfig(projectRoot, ["../", "../packages/chat", "../packages/data_model"]);
       Directory(path.join(projectRoot.path, "packages", "chat", "lib")).createSync(recursive: true);
       Directory(path.join(projectRoot.path, "packages", "data_model", "lib")).createSync(recursive: true);
 
@@ -74,9 +55,30 @@ void main() {
         ..createSync(recursive: true)
         ..writeAsStringSync("void main() {}");
 
-      writePackageConfig(["../", external.uri.toString()]);
+      _writePackageConfig(projectRoot, ["../", external.uri.toString()]);
 
       expect(const NativeAssetDetector().needsCToolchain(projectRoot.path), isTrue);
     });
   });
+}
+
+/// Writes a `.dart_tool/package_config.json` under [projectRoot] listing
+/// [packageRootUris] (each a `rootUri` relative to `.dart_tool/`).
+void _writePackageConfig(Directory projectRoot, List<String> packageRootUris) {
+  final packages = packageRootUris
+      .asMap()
+      .entries
+      .map((e) => '{"name": "pkg${e.key}", "rootUri": "${e.value}", "packageUri": "lib/"}')
+      .join(",\n    ");
+  File(path.join(projectRoot.path, ".dart_tool", "package_config.json"))
+    ..createSync(recursive: true)
+    ..writeAsStringSync('{\n  "configVersion": 2,\n  "packages": [\n    $packages\n  ]\n}');
+}
+
+/// Writes a native-asset build hook at `<packageDirRelativeToRoot>/hook/build.dart`
+/// under [projectRoot].
+void _writeBuildHook(Directory projectRoot, String packageDirRelativeToRoot) {
+  File(path.join(projectRoot.path, packageDirRelativeToRoot, "hook", "build.dart"))
+    ..createSync(recursive: true)
+    ..writeAsStringSync("void main() {}");
 }

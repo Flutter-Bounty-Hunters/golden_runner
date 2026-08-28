@@ -18,13 +18,9 @@ void main() {
       }
     });
 
-    void writeFile(String name, int bytes) {
-      File(path.join(tempDir.path, name)).writeAsBytesSync(List.filled(bytes, 0));
-    }
-
     test("decides to apply the default for a large context with no .dockerignore", () async {
-      writeFile("a.bin", 80);
-      writeFile("b.bin", 80);
+      _writeFile(tempDir, "a.bin", 80);
+      _writeFile(tempDir, "b.bin", 80);
 
       // A tiny threshold stands in for the real 2 GiB, so the test doesn't need
       // to write gigabytes.
@@ -38,9 +34,9 @@ void main() {
     });
 
     test("reports the FULL context size, not just the threshold", () async {
-      writeFile("a.bin", 200);
-      writeFile("b.bin", 200);
-      writeFile("c.bin", 200);
+      _writeFile(tempDir, "a.bin", 200);
+      _writeFile(tempDir, "b.bin", 200);
+      _writeFile(tempDir, "c.bin", 200);
 
       // Threshold is crossed at 100 bytes, but the reported size must be the full
       // 600, not a value truncated at the threshold.
@@ -54,14 +50,10 @@ void main() {
 
     test("estimates the kept size and savings after the default ignore", () async {
       // Kept by the default ignore.
-      Directory(path.join(tempDir.path, "lib")).createSync();
-      File(path.join(tempDir.path, "lib", "keep.dart")).writeAsBytesSync(List.filled(300, 0));
+      _writeFile(tempDir, path.join("lib", "keep.dart"), 300);
       // Excluded by the default ignore (build/ and .dart_tool/).
-      Directory(path.join(tempDir.path, "build")).createSync();
-      File(path.join(tempDir.path, "build", "out.bin")).writeAsBytesSync(List.filled(500, 0));
-      Directory(path.join(tempDir.path, "packages", "chat", ".dart_tool")).createSync(recursive: true);
-      File(path.join(tempDir.path, "packages", "chat", ".dart_tool", "x.json"))
-          .writeAsBytesSync(List.filled(200, 0));
+      _writeFile(tempDir, path.join("build", "out.bin"), 500);
+      _writeFile(tempDir, path.join("packages", "chat", ".dart_tool", "x.json"), 200);
 
       const guard = BuildContextGuard(thresholdBytes: 100);
       final assessment = await guard.assess(tempDir.path);
@@ -73,7 +65,7 @@ void main() {
 
     test("marks the size approximate when the scan cap is hit", () async {
       for (var i = 0; i < 5; i += 1) {
-        writeFile("f$i.bin", 100);
+        _writeFile(tempDir, "f$i.bin", 100);
       }
 
       // A tiny cap forces early termination, so the total is a lower bound.
@@ -85,8 +77,8 @@ void main() {
     });
 
     test("defers to a .dockerignore the user already manages", () async {
-      writeFile("a.bin", 80);
-      writeFile("b.bin", 80);
+      _writeFile(tempDir, "a.bin", 80);
+      _writeFile(tempDir, "b.bin", 80);
       File(path.join(tempDir.path, ".dockerignore")).writeAsStringSync("custom_dir/\n");
 
       const guard = BuildContextGuard(thresholdBytes: 100);
@@ -96,7 +88,7 @@ void main() {
     });
 
     test("leaves a context under the threshold alone", () async {
-      writeFile("a.bin", 10);
+      _writeFile(tempDir, "a.bin", 10);
 
       const guard = BuildContextGuard(thresholdBytes: 1000000);
       expect((await guard.assess(tempDir.path)).decision, BuildContextIgnoreDecision.none);
@@ -109,8 +101,7 @@ void main() {
     });
 
     test("counts files in nested directories when measuring size", () async {
-      Directory(path.join(tempDir.path, "nested", "deep")).createSync(recursive: true);
-      File(path.join(tempDir.path, "nested", "deep", "big.bin")).writeAsBytesSync(List.filled(200, 0));
+      _writeFile(tempDir, path.join("nested", "deep", "big.bin"), 200);
 
       const guard = BuildContextGuard(thresholdBytes: 100);
       expect((await guard.assess(tempDir.path)).decision, BuildContextIgnoreDecision.applyDefault);
@@ -143,4 +134,12 @@ void main() {
       expect(BuildContextGuard.formatBytes((2.4 * 1024 * 1024 * 1024).round()), "2.4 GB");
     });
   });
+}
+
+/// Writes a file of [bytes] zero-bytes at [relativePath] within [dir], creating
+/// parent directories as needed.
+void _writeFile(Directory dir, String relativePath, int bytes) {
+  final file = File(path.join(dir.path, relativePath));
+  file.parent.createSync(recursive: true);
+  file.writeAsBytesSync(List.filled(bytes, 0));
 }

@@ -312,18 +312,15 @@ void main() {
     });
 
     group("pub workspace validation >", () {
-      const workspaceMemberPubspec = "name: my_app\nresolution: workspace\n";
-      const workspaceRootPubspec = "name: my_workspace\nworkspace:\n  - packages/my_app\n";
-
       test("throws with a --path-to-project-root hint when the workspace root won't be copied", () {
         final command = UpdateGoldensCommand(
           environment: FakeGoldensCommandEnvironment(
             currentDirectoryPath: "/workspace/repo/packages/my_app",
             fileContents: {
               // The package under test is a workspace member.
-              "/workspace/repo/packages/my_app/pubspec.yaml": workspaceMemberPubspec,
+              "/workspace/repo/packages/my_app/pubspec.yaml": _workspaceMemberPubspec,
               // The workspace root lives at the repo root, above the (default) project root.
-              "/workspace/repo/pubspec.yaml": workspaceRootPubspec,
+              "/workspace/repo/pubspec.yaml": _workspaceRootPubspec,
             },
           ),
         );
@@ -347,8 +344,8 @@ void main() {
           environment: FakeGoldensCommandEnvironment(
             currentDirectoryPath: "/workspace/repo/packages/my_app",
             fileContents: {
-              "/workspace/repo/packages/my_app/pubspec.yaml": workspaceMemberPubspec,
-              "/workspace/repo/pubspec.yaml": workspaceRootPubspec,
+              "/workspace/repo/packages/my_app/pubspec.yaml": _workspaceMemberPubspec,
+              "/workspace/repo/pubspec.yaml": _workspaceRootPubspec,
             },
           ),
         );
@@ -373,18 +370,14 @@ void main() {
     });
 
     group("verbosity >", () {
-      UpdateGoldensCommand command() => UpdateGoldensCommand(
-            environment: FakeGoldensCommandEnvironment(currentDirectoryPath: "/workspace/my_app"),
-          );
-
       test("defaults to normal: not silent, errors-only Docker output", () {
-        final c = command()..parseArguments([]);
+        final c = _verbosityCommand()..parseArguments([]);
         expect(c.silent, isFalse);
         expect(c.dockerVerbosity, DockerVerbosity.errorOnly);
       });
 
       test("--silent enables silent mode, keeping errors-only Docker output", () {
-        final c = command()..parseArguments(["--silent"]);
+        final c = _verbosityCommand()..parseArguments(["--silent"]);
         expect(c.silent, isTrue);
         expect(c.dockerVerbosity, DockerVerbosity.errorOnly);
         // --silent is consumed, never forwarded to `flutter test`.
@@ -392,7 +385,7 @@ void main() {
       });
 
       test("--verbose enables max Docker output and is forwarded to flutter test", () {
-        final c = command()..parseArguments(["--verbose"]);
+        final c = _verbosityCommand()..parseArguments(["--verbose"]);
         expect(c.silent, isFalse);
         expect(c.dockerVerbosity, DockerVerbosity.standard);
         // --verbose stays in the args so `flutter test` is also verbose.
@@ -400,25 +393,25 @@ void main() {
       });
 
       test("-v behaves like --verbose", () {
-        final c = command()..parseArguments(["-v"]);
+        final c = _verbosityCommand()..parseArguments(["-v"]);
         expect(c.dockerVerbosity, DockerVerbosity.standard);
         expect(c.command, contains("-v"));
       });
 
       test("an explicit --docker-verbosity overrides the derived level", () {
-        final c = command()..parseArguments(["--verbose", "--docker-verbosity", "quiet"]);
+        final c = _verbosityCommand()..parseArguments(["--verbose", "--docker-verbosity", "quiet"]);
         expect(c.dockerVerbosity, DockerVerbosity.quiet);
       });
 
       test("throws when combining --silent and --verbose", () {
         expect(
-          () => command().parseArguments(["--silent", "--verbose"]),
+          () => _verbosityCommand().parseArguments(["--silent", "--verbose"]),
           throwsA(predicate((Object e) => e.toString().contains("Cannot combine"))),
         );
       });
 
       test("the request carries the silent flag", () {
-        final c = command()..parseArguments(["--silent"]);
+        final c = _verbosityCommand()..parseArguments(["--silent"]);
         expect(c.assembleDockerContainerRequest().silent, isTrue);
       });
     });
@@ -640,3 +633,11 @@ void main() {
     });
   });
 }
+
+UpdateGoldensCommand _verbosityCommand() => UpdateGoldensCommand(
+      environment: FakeGoldensCommandEnvironment(currentDirectoryPath: "/workspace/my_app"),
+    );
+
+const _workspaceMemberPubspec = "name: my_app\nresolution: workspace\n";
+
+const _workspaceRootPubspec = "name: my_workspace\nworkspace:\n  - packages/my_app\n";

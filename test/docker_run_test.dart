@@ -52,32 +52,21 @@ void main() {
   group("buildAndRun >", () {
     tearDown(Docker.resetDocker);
 
-    // A custom Dockerfile path skips the (filesystem-touching) context guard and
-    // native-asset detection, keeping these tests hermetic. `none` verbosity keeps
-    // the checkpoints quiet.
-    RunDockerContainerRequest request({bool silent = false}) => RunDockerContainerRequest(
-          dockerImageName: "golden_tester",
-          dockerVerbosity: DockerVerbosity.none,
-          silent: silent,
-          dockerFilePath: "custom.Dockerfile",
-          command: const ["flutter", "test"],
-        );
-
     test("returns 0 when the build and tests succeed", () async {
       Docker.useDocker(FakeDocker());
-      expect(await const DockerGoldenContainer().buildAndRun(request()), 0);
+      expect(await const DockerGoldenContainer().buildAndRun(_request()), 0);
     });
 
     test("returns the test exit code when tests fail", () async {
       Docker.useDocker(FakeDocker(runContainerExitCode: 3));
-      expect(await const DockerGoldenContainer().buildAndRun(request()), 3);
+      expect(await const DockerGoldenContainer().buildAndRun(_request()), 3);
     });
 
     test("returns the build exit code and skips the container when the build fails", () async {
       final docker = FakeDocker(buildImageExitCode: 7, runContainerExitCode: 0);
       Docker.useDocker(docker);
 
-      expect(await const DockerGoldenContainer().buildAndRun(request()), 7);
+      expect(await const DockerGoldenContainer().buildAndRun(_request()), 7);
       // The container never runs if the image build failed...
       expect(docker.getCallCountFor("runContainer"), 0);
       // ...but the image is still cleaned up.
@@ -88,11 +77,24 @@ void main() {
       final docker = FakeDocker();
       Docker.useDocker(docker);
 
-      await const DockerGoldenContainer().buildAndRun(request(silent: true));
+      await const DockerGoldenContainer().buildAndRun(_request(silent: true));
       expect(docker.lastRunWasSilent, isTrue);
 
-      await const DockerGoldenContainer().buildAndRun(request(silent: false));
+      await const DockerGoldenContainer().buildAndRun(_request(silent: false));
       expect(docker.lastRunWasSilent, isFalse);
     });
   });
 }
+
+/// A minimal request for exercising `buildAndRun`.
+///
+/// A custom Dockerfile path skips the (filesystem-touching) context guard and
+/// native-asset detection, keeping these tests hermetic. `none` verbosity keeps
+/// the checkpoints quiet.
+RunDockerContainerRequest _request({bool silent = false}) => RunDockerContainerRequest(
+      dockerImageName: "golden_tester",
+      dockerVerbosity: DockerVerbosity.none,
+      silent: silent,
+      dockerFilePath: "custom.Dockerfile",
+      command: const ["flutter", "test"],
+    );
