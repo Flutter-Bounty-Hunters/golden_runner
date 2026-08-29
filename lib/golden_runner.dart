@@ -8,5 +8,6 @@ export 'src/infrastructure/build_context.dart';
 export 'src/infrastructure/checkpoints.dart';
 export 'src/infrastructure/fvm.dart';
 export 'src/infrastructure/native_assets.dart';
+export 'src/infrastructure/path_dependencies.dart';
 export 'src/infrastructure/docker/docker_client.dart';
 export 'src/infrastructure/logging.dart';

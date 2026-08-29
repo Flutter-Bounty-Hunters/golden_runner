@@ -5,6 +5,7 @@ import 'package:golden_runner/src/infrastructure/arguments.dart';
 import 'package:golden_runner/src/infrastructure/docker/docker_client.dart';
 import 'package:golden_runner/src/infrastructure/fvm.dart';
 import 'package:golden_runner/src/infrastructure/logging.dart';
+import 'package:golden_runner/src/infrastructure/path_dependencies.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 import 'package:yaml/yaml.dart';
@@ -37,7 +38,14 @@ abstract class GoldensCommand extends DockerContainerCommand {
         // create failure files, or create updated golden files.
         '$hostTestDirectoryPath:'
             '${path.posix.join(containerWorkingDirectory, containerTestDirectoryPath)}',
+        // Mount any local `path:` dependencies that live outside the copied project
+        // (read-only), at their absolute path, so the container's `pub get` resolves them.
+        ..._externalPathDependencyMounts,
       };
+
+  /// Bind-mount specs (`<hostDir>:<hostDir>:ro`) for local path dependencies that
+  /// resolve outside the copied project tree.
+  Set<String> _externalPathDependencyMounts = const {};
 
   @override
   String get pathToProjectRoot => _pathToProjectRoot!;
@@ -192,6 +200,11 @@ abstract class GoldensCommand extends DockerContainerCommand {
       packageDirectoryPath: currentDirectoryPath,
       projectRootPath: projectRootPath,
     );
+
+    // Find local `path:` dependencies that live outside the copied project tree and
+    // mount them into the container (read-only, at their absolute path) so `pub get`
+    // can resolve them. Handles absolute-path overrides like a local `super_editor`.
+    _resolveExternalPathDependencies(currentDirectoryPath, projectRootPath);
 
     // Other arguments passed at the end of the command.
     // For example, the test directory.
@@ -366,6 +379,32 @@ abstract class GoldensCommand extends DockerContainerCommand {
       // If the pubspec can't be parsed, don't block the run over it. Let Flutter
       // surface any resulting error from inside the container.
       return null;
+    }
+  }
+
+  void _resolveExternalPathDependencies(String currentDirectoryPath, String projectRootPath) {
+    final externalPaths = const PathDependencyResolver().resolveExternalPathDependencies(
+      copiedRoot: projectRootPath,
+      seedPubspecs: [
+        path.join(projectRootPath, "pubspec.yaml"),
+        path.join(currentDirectoryPath, "pubspec.yaml"),
+      ],
+      readFile: _environment.readFileAsString,
+      directoryExists: _environment.directoryExists,
+    );
+
+    _externalPathDependencyMounts = {
+      for (final directory in externalPaths) "$directory:$directory:ro",
+    };
+
+    if (externalPaths.isNotEmpty && !silent && dockerVerbosity != DockerVerbosity.none) {
+      final plural = externalPaths.length == 1 ? "y" : "ies";
+      // ignore: avoid_print
+      print("[golden_runner] ℹ Mounting ${externalPaths.length} local path dependenc$plural into the container (read-only):");
+      for (final directory in externalPaths) {
+        // ignore: avoid_print
+        print("[golden_runner]   $directory");
+      }
     }
   }
 

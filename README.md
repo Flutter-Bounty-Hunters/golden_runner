@@ -149,6 +149,26 @@ fails your CI job — including in `--silent` mode.
 For fine-grained control of just the Docker passthrough, `--docker-verbosity <standard|quiet|error|none>`
 overrides the level derived from the flags above.
 
+## Local path dependencies
+If your project uses a local `path:` dependency that lives **outside** the project tree — for
+example an absolute override:
+
+```
+dependency_overrides:
+  super_editor:
+    path: /Users/me/Projects/super_editor/super_editor
+```
+
+that directory isn't copied into the container, so the container's `pub get` couldn't find it.
+`golden_runner` detects such dependencies (across `dependencies`, `dev_dependencies`, and
+`dependency_overrides`, transitively and across pub-workspace members) and bind-mounts each one
+**read-only into the container at its absolute path**, so an absolute `path:` resolves as-is. It
+tells you what it mounted.
+
+Note: this works for **absolute** path dependencies (and the relative path deps *within* those
+external packages). A relative `path:` in your own project that points *above* the copied project
+root isn't supported — use an absolute path, or widen `--path-to-project-root` to include it.
+
 ## Large projects and the build context
 `golden_runner` copies your project into the Docker image to run tests. Without a `.dockerignore`,
 the *entire* directory — including generated output like `build/` and `.dart_tool/`, plus `.git` —

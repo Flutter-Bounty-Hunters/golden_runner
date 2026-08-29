@@ -369,6 +369,45 @@ void main() {
       });
     });
 
+    group("local path dependencies >", () {
+      test("mounts an external absolute path dependency read-only", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+            directories: {"/Users/me/super_editor/super_editor"},
+            fileContents: {
+              "/workspace/my_app/pubspec.yaml": "name: my_app\n"
+                  "dependency_overrides:\n"
+                  "  super_editor:\n"
+                  "    path: /Users/me/super_editor/super_editor\n",
+            },
+          ),
+        )..parseArguments([]);
+
+        expect(
+          command.mountPaths,
+          contains("/Users/me/super_editor/super_editor:/Users/me/super_editor/super_editor:ro"),
+        );
+      });
+
+      test("doesn't mount path deps that are inside the copied project", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+            directories: {"/workspace/my_app/packages/local"},
+            fileContents: {
+              "/workspace/my_app/pubspec.yaml": "name: my_app\n"
+                  "dependencies:\n"
+                  "  local:\n"
+                  "    path: packages/local\n",
+            },
+          ),
+        )..parseArguments([]);
+
+        expect(command.mountPaths.any((m) => m.contains("packages/local")), isFalse);
+      });
+    });
+
     group("verbosity >", () {
       test("defaults to normal: not silent, errors-only Docker output", () {
         final c = _verbosityCommand()..parseArguments([]);
