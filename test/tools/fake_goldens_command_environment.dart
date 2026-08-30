@@ -6,14 +6,19 @@ class FakeGoldensCommandEnvironment extends GoldensCommandEnvironment {
     required this.currentDirectoryPath,
     Set<String> directories = const {},
     Set<String> files = const {},
+    Map<String, String> fileContents = const {},
   })  : _directories = directories.map((directory) => path.normalize(directory)).toSet(),
-        _files = files.map((file) => path.normalize(file)).toSet();
+        _files = files.map((file) => path.normalize(file)).toSet(),
+        _fileContents = fileContents.map(
+          (file, contents) => MapEntry(path.normalize(file), contents),
+        );
 
   @override
   final String currentDirectoryPath;
 
   final Set<String> _directories;
   final Set<String> _files;
+  final Map<String, String> _fileContents;
 
   @override
   bool directoryExists(String directoryPath) {
@@ -22,7 +27,13 @@ class FakeGoldensCommandEnvironment extends GoldensCommandEnvironment {
 
   @override
   bool fileExists(String filePath) {
-    return _files.contains(_absolutePath(filePath));
+    final absolutePath = _absolutePath(filePath);
+    return _files.contains(absolutePath) || _fileContents.containsKey(absolutePath);
+  }
+
+  @override
+  String? readFileAsString(String filePath) {
+    return _fileContents[_absolutePath(filePath)];
   }
 
   String _absolutePath(String filePath) {

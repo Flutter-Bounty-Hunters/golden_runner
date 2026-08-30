@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:golden_runner/golden_runner.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
@@ -83,6 +85,144 @@ void main() {
           "--verbose",
           "special_test_goldens",
         ]);
+      });
+
+      test("with a pinned Flutter version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([
+            "--flutter-version",
+            "3.44.6",
+          ]);
+
+        expect(command.flutterVersion, "3.44.6");
+        // The pinned version flows into the Docker request so it reaches the generated Dockerfile.
+        expect(command.assembleDockerContainerRequest().flutterVersion, "3.44.6");
+        // The version isn't mistaken for the test target.
+        expect(command.testCommandArguments, ["test_goldens"]);
+      });
+
+      test("defaults to no pinned Flutter version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([]);
+
+        expect(command.flutterVersion, null);
+        expect(command.assembleDockerContainerRequest().flutterVersion, null);
+      });
+
+      test("with a pinned Ubuntu version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([
+            "--ubuntu-version",
+            "24.04",
+          ]);
+
+        expect(command.ubuntuVersion, "24.04");
+        // The pinned version flows into the Docker request so it reaches the generated Dockerfile.
+        expect(command.assembleDockerContainerRequest().ubuntuVersion, "24.04");
+        // The version isn't mistaken for the test target.
+        expect(command.testCommandArguments, ["test_goldens"]);
+      });
+
+      test("defaults to no pinned Ubuntu version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([]);
+
+        expect(command.ubuntuVersion, null);
+        expect(command.assembleDockerContainerRequest().ubuntuVersion, null);
+      });
+
+      test("auto-detects the Flutter version from FVM config (.fvmrc)", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              // .fvmrc at the project root, above the package under test.
+              "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+            },
+          ),
+        )..parseArguments([
+            "--path-to-project-root",
+            "../..",
+          ]);
+
+        expect(command.flutterVersion, "3.44.6");
+        expect(command.assembleDockerContainerRequest().flutterVersion, "3.44.6");
+      });
+
+      test("logs that the Flutter version was inferred from FVM", () {
+        final logs = <String>[];
+        runZoned(
+          () {
+            UpdateGoldensCommand(
+              environment: FakeGoldensCommandEnvironment(
+                currentDirectoryPath: "/workspace/repo/packages/my_app",
+                fileContents: {
+                  "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+                },
+              ),
+            ).parseArguments(["--path-to-project-root", "../.."]);
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => logs.add(line),
+          ),
+        );
+
+        expect(
+          logs.any((line) => line.contains("FVM") && line.contains("3.44.6")),
+          isTrue,
+          reason: "expected a log line mentioning FVM and the inferred version; got: $logs",
+        );
+      });
+
+      test("does not log FVM inference when the version is explicit", () {
+        final logs = <String>[];
+        runZoned(
+          () {
+            UpdateGoldensCommand(
+              environment: FakeGoldensCommandEnvironment(
+                currentDirectoryPath: "/workspace/repo/packages/my_app",
+                fileContents: {
+                  "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+                },
+              ),
+            ).parseArguments(["--path-to-project-root", "../..", "--flutter-version", "stable"]);
+          },
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => logs.add(line),
+          ),
+        );
+
+        expect(logs.any((line) => line.contains("FVM")), isFalse);
+      });
+
+      test("explicit --flutter-version overrides FVM config", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              "/workspace/repo/.fvmrc": '{"flutter": "3.44.6"}',
+            },
+          ),
+        )..parseArguments([
+            "--path-to-project-root",
+            "../..",
+            "--flutter-version",
+            "stable",
+          ]);
+
+        expect(command.flutterVersion, "stable");
       });
 
       test("handles named arguments when there's no specified test directory", () {
@@ -196,6 +336,150 @@ void main() {
             "none",
           ]);
         expect(commandWithNoVerbosity.dockerVerbosity, DockerVerbosity.none);
+      });
+    });
+
+    group("pub workspace validation >", () {
+      test("throws with a --path-to-project-root hint when the workspace root won't be copied", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              // The package under test is a workspace member.
+              "/workspace/repo/packages/my_app/pubspec.yaml": _workspaceMemberPubspec,
+              // The workspace root lives at the repo root, above the (default) project root.
+              "/workspace/repo/pubspec.yaml": _workspaceRootPubspec,
+            },
+          ),
+        );
+
+        expect(
+          () => command.parseArguments([]),
+          throwsA(
+            predicate((Object error) {
+              final message = error.toString();
+              return message.contains("member of a Dart pub workspace") &&
+                  message.contains("--path-to-project-root") &&
+                  // The hint suggests the exact relative path from the package to the root.
+                  message.contains("--path-to-project-root ../..");
+            }),
+          ),
+        );
+      });
+
+      test("passes when --path-to-project-root includes the workspace root", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/repo/packages/my_app",
+            fileContents: {
+              "/workspace/repo/packages/my_app/pubspec.yaml": _workspaceMemberPubspec,
+              "/workspace/repo/pubspec.yaml": _workspaceRootPubspec,
+            },
+          ),
+        );
+
+        // Pointing the project root at the repo root includes the workspace root
+        // in the container copy, so parsing succeeds.
+        expect(() => command.parseArguments(["--path-to-project-root", "../.."]), returnsNormally);
+      });
+
+      test("passes for a normal package that isn't a workspace member", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+            fileContents: {
+              "/workspace/my_app/pubspec.yaml": "name: my_app\n",
+            },
+          ),
+        );
+
+        expect(() => command.parseArguments([]), returnsNormally);
+      });
+    });
+
+    group("local path dependencies >", () {
+      test("mounts an external absolute path dependency read-only", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+            directories: {"/Users/me/super_editor/super_editor"},
+            fileContents: {
+              "/workspace/my_app/pubspec.yaml": "name: my_app\n"
+                  "dependency_overrides:\n"
+                  "  super_editor:\n"
+                  "    path: /Users/me/super_editor/super_editor\n",
+            },
+          ),
+        )..parseArguments([]);
+
+        expect(
+          command.mountPaths,
+          contains("/Users/me/super_editor/super_editor:/Users/me/super_editor/super_editor:ro"),
+        );
+      });
+
+      test("doesn't mount path deps that are inside the copied project", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+            directories: {"/workspace/my_app/packages/local"},
+            fileContents: {
+              "/workspace/my_app/pubspec.yaml": "name: my_app\n"
+                  "dependencies:\n"
+                  "  local:\n"
+                  "    path: packages/local\n",
+            },
+          ),
+        )..parseArguments([]);
+
+        expect(command.mountPaths.any((m) => m.contains("packages/local")), isFalse);
+      });
+    });
+
+    group("verbosity >", () {
+      test("defaults to normal: not silent, errors-only Docker output", () {
+        final c = _verbosityCommand()..parseArguments([]);
+        expect(c.silent, isFalse);
+        expect(c.dockerVerbosity, DockerVerbosity.errorOnly);
+      });
+
+      test("--silent enables silent mode, keeping errors-only Docker output", () {
+        final c = _verbosityCommand()..parseArguments(["--silent"]);
+        expect(c.silent, isTrue);
+        expect(c.dockerVerbosity, DockerVerbosity.errorOnly);
+        // --silent is consumed, never forwarded to `flutter test`.
+        expect(c.command, isNot(contains("--silent")));
+      });
+
+      test("--verbose enables max Docker output and is forwarded to flutter test", () {
+        final c = _verbosityCommand()..parseArguments(["--verbose"]);
+        expect(c.silent, isFalse);
+        expect(c.dockerVerbosity, DockerVerbosity.standard);
+        // --verbose stays in the args so `flutter test` is also verbose.
+        expect(c.command, contains("--verbose"));
+      });
+
+      test("-v behaves like --verbose", () {
+        final c = _verbosityCommand()..parseArguments(["-v"]);
+        expect(c.dockerVerbosity, DockerVerbosity.standard);
+        expect(c.command, contains("-v"));
+      });
+
+      test("an explicit --docker-verbosity overrides the derived level", () {
+        final c = _verbosityCommand()..parseArguments(["--verbose", "--docker-verbosity", "quiet"]);
+        expect(c.dockerVerbosity, DockerVerbosity.quiet);
+      });
+
+      test("throws when combining --silent and --verbose", () {
+        expect(
+          () => _verbosityCommand().parseArguments(["--silent", "--verbose"]),
+          throwsA(predicate((Object e) => e.toString().contains("Cannot combine"))),
+        );
+      });
+
+      test("the request carries the silent flag", () {
+        final c = _verbosityCommand()..parseArguments(["--silent"]);
+        expect(c.assembleDockerContainerRequest().silent, isTrue);
       });
     });
 
@@ -416,3 +700,11 @@ void main() {
     });
   });
 }
+
+UpdateGoldensCommand _verbosityCommand() => UpdateGoldensCommand(
+      environment: FakeGoldensCommandEnvironment(currentDirectoryPath: "/workspace/my_app"),
+    );
+
+const _workspaceMemberPubspec = "name: my_app\nresolution: workspace\n";
+
+const _workspaceRootPubspec = "name: my_workspace\nworkspace:\n  - packages/my_app\n";

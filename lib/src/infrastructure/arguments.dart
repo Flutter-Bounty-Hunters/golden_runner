@@ -36,6 +36,20 @@ String? parseArgumentOption(List<String> arguments, String name) {
   return value;
 }
 
+/// Returns `true` if the boolean flag [name] is present in [arguments], removing
+/// every occurrence of it from the list.
+bool parseArgumentFlag(List<String> arguments, String name) {
+  final lengthBefore = arguments.length;
+  arguments.removeWhere((argument) => argument == name);
+  return arguments.length != lengthBefore;
+}
+
+/// Returns `true` if any of [names] is present in [arguments], WITHOUT removing
+/// them (so they can still be forwarded, e.g. to `flutter test`).
+bool hasArgumentFlag(List<String> arguments, List<String> names) {
+  return arguments.any(names.contains);
+}
+
 bool _isLongArgumentName(String argument) {
   return argument.startsWith("--") && argument.length > "--".length;
 }
