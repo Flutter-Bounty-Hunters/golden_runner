@@ -60,9 +60,12 @@ class DockerGoldenContainer {
     // Builds the image used to run the container. We can build the image
     // even if it already exists. Docker will cache each step used in the
     // Dockerfile, so subsequent builds will be faster.
-    final buildingImageLabel = request.flutterVersion != null
-        ? "Building Docker image (Flutter ${request.flutterVersion})"
-        : "Building Docker image";
+    final versionParts = [
+      if (request.flutterVersion != null) "Flutter ${request.flutterVersion}",
+      if (request.ubuntuVersion != null) "Ubuntu ${request.ubuntuVersion}",
+    ];
+    final buildingImageLabel =
+        versionParts.isEmpty ? "Building Docker image" : "Building Docker image (${versionParts.join(", ")})";
     final buildExitCode = await checkpoints.step(
       buildingImageLabel,
       () => Docker.instance.buildImage(
@@ -70,6 +73,7 @@ class DockerGoldenContainer {
         imageName: request.dockerImageName,
         pathToProjectRoot: request.pathToProjectRoot,
         flutterVersion: request.flutterVersion,
+        ubuntuVersion: request.ubuntuVersion,
         dockerignoreContent: dockerignoreContent,
         includeCToolchain: includeCToolchain,
         verbosity: request.dockerVerbosity,
@@ -125,6 +129,7 @@ class RunDockerContainerRequest {
     required this.dockerVerbosity,
     this.silent = false,
     this.flutterVersion,
+    this.ubuntuVersion,
     this.mountPaths = const {},
     this.pathToProjectRoot = ".",
     this.containerWorkingDirectory = ".",
@@ -166,6 +171,13 @@ class RunDockerContainerRequest {
   /// Dockerfile is provided via [dockerFilePath].
   final String? flutterVersion;
 
+  /// The Ubuntu version (a Docker Hub `ubuntu` image tag, e.g., `"24.04"` or `"noble"`) to base
+  /// golden_runner's built-in Docker Image on.
+  ///
+  /// When `null`, the built-in Dockerfile uses `ubuntu:latest`. Ignored when a custom Dockerfile
+  /// is provided via [dockerFilePath].
+  final String? ubuntuVersion;
+
   /// Locations on the host machine where the Container should be able to read/write.
   final Set<String> mountPaths;
 
@@ -196,6 +208,7 @@ class RunDockerContainerRequest {
           dockerVerbosity == other.dockerVerbosity &&
           silent == other.silent &&
           flutterVersion == other.flutterVersion &&
+          ubuntuVersion == other.ubuntuVersion &&
           pathToProjectRoot == other.pathToProjectRoot &&
           containerWorkingDirectory == other.containerWorkingDirectory &&
           const DeepCollectionEquality().equals(mountPaths, other.mountPaths) &&
@@ -208,6 +221,7 @@ class RunDockerContainerRequest {
         dockerVerbosity,
         silent,
         flutterVersion,
+        ubuntuVersion,
         const DeepCollectionEquality().hash(mountPaths),
         pathToProjectRoot,
         containerWorkingDirectory,
@@ -266,13 +280,14 @@ class Docker {
     required String imageName,
     String? pathToProjectRoot,
     String? flutterVersion,
+    String? ubuntuVersion,
     String? dockerignoreContent,
     bool includeCToolchain = true,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,
     bool throwOnError = false,
   }) async {
     GrLog.docker.info(
-      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $pathToProjectRoot, flutter version: ${flutterVersion ?? "default"}, C toolchain: $includeCToolchain",
+      "Building Docker image - docker file: $dockerFilePath, image name: $imageName, working directory: $pathToProjectRoot, flutter version: ${flutterVersion ?? "default"}, ubuntu version: ${ubuntuVersion ?? "default"}, C toolchain: $includeCToolchain",
     );
 
     // For golden_runner's built-in Dockerfile, write it to a temp directory OUTSIDE
@@ -287,6 +302,7 @@ class Docker {
       final dockerfile = File(_join(tempBuildDir.path, "golden_tester.Dockerfile"))
         ..writeAsStringSync(createGoldenTesterDockerfile(
           flutterVersion: flutterVersion,
+          ubuntuVersion: ubuntuVersion,
           includeCToolchain: includeCToolchain,
         ));
       if (dockerignoreContent != null) {
@@ -491,10 +507,13 @@ String _join(String directory, String file) => "$directory${Platform.pathSeparat
 /// Docker cache whenever stable advances, so the clone picks up new stable releases.
 /// (For strict reproducibility, pass a specific version instead.)
 ///
+/// [ubuntuVersion] selects the base image tag (`FROM ubuntu:<tag>`); when `null`, `latest` is
+/// used. Pin it when golden output depends on the OS's font rendering, or to match CI.
+///
 /// [includeCToolchain] adds a C toolchain (clang, build-essential), needed only for
 /// projects with a Dart native-asset build hook (package:native_toolchain_c).
 @visibleForTesting
-String createGoldenTesterDockerfile({String? flutterVersion, bool includeCToolchain = true}) {
+String createGoldenTesterDockerfile({String? flutterVersion, String? ubuntuVersion, bool includeCToolchain = true}) {
   final installFlutter = flutterVersion != null
       ? "# Clone the pinned Flutter version so the container matches the project (and CI).\n"
           "RUN git clone https://github.com/flutter/flutter.git --branch $flutterVersion \${FLUTTER_HOME}"
@@ -512,7 +531,7 @@ String createGoldenTesterDockerfile({String? flutterVersion, bool includeCToolch
   final aptPackages = includeCToolchain ? "git curl unzip clang build-essential" : "git curl unzip";
 
   return """
-FROM ubuntu:latest
+FROM ubuntu:${ubuntuVersion ?? "latest"}
 
 ENV FLUTTER_HOME=\${HOME}/sdks/flutter
 ENV PATH \${PATH}:\${FLUTTER_HOME}/bin:\${FLUTTER_HOME}/bin/cache/dart-sdk/bin
@@ -661,6 +680,7 @@ class FakeDocker implements Docker {
     required String imageName,
     String? pathToProjectRoot,
     String? flutterVersion,
+    String? ubuntuVersion,
     String? dockerignoreContent,
     bool includeCToolchain = true,
     DockerVerbosity verbosity = DockerVerbosity.errorOnly,

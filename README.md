@@ -118,6 +118,20 @@ goldens test --flutter-version beta
 If you provide your own custom Dockerfile, this flag is ignored and you'll need to specify the
 desired Flutter version, yourself.
 
+## Specific Ubuntu Version
+By default, `golden_runner` builds its image on `ubuntu:latest`. To base it on a different Ubuntu
+version, use the `--ubuntu-version` flag with any Docker Hub `ubuntu` tag.
+
+```
+goldens update --ubuntu-version 24.04
+
+goldens test --ubuntu-version noble
+```
+
+This is useful when your goldens depend on the OS's font rendering (a different Ubuntu can paint
+goldens slightly differently), or to match the Ubuntu version of your CI runner. As with
+`--flutter-version`, this flag is ignored if you provide your own custom Dockerfile.
+
 ### FVM projects
 If your project uses [FVM](https://fvm.app), you don't need to pass `--flutter-version` at all.
 

@@ -37,5 +37,16 @@ void main() {
     test("copies the project into the image", () {
       expect(createGoldenTesterDockerfile(), contains("COPY ./ /golden_tester"));
     });
+
+    test("defaults the base image to ubuntu:latest", () {
+      expect(createGoldenTesterDockerfile(), contains("FROM ubuntu:latest"));
+    });
+
+    test("uses the pinned Ubuntu version when one is given", () {
+      final dockerfile = createGoldenTesterDockerfile(ubuntuVersion: "24.04");
+
+      expect(dockerfile, contains("FROM ubuntu:24.04"));
+      expect(dockerfile, isNot(contains("FROM ubuntu:latest")));
+    });
   });
 }

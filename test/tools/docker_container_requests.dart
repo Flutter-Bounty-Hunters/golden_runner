@@ -56,6 +56,12 @@ class _RunDockerContainerRequestMatcher extends Matcher {
     );
     _addMismatch(
       mismatches,
+      "ubuntuVersion",
+      _expected.ubuntuVersion,
+      item.ubuntuVersion,
+    );
+    _addMismatch(
+      mismatches,
       "mountPaths",
       _sorted(_expected.mountPaths),
       _sorted(item.mountPaths),
@@ -142,6 +148,7 @@ String _requestSummary(RunDockerContainerRequest request) {
       "dockerImageName: ${_formatValue(request.dockerImageName)}, "
       "dockerVerbosity: ${request.dockerVerbosity}, "
       "flutterVersion: ${_formatValue(request.flutterVersion)}, "
+      "ubuntuVersion: ${_formatValue(request.ubuntuVersion)}, "
       "mountPaths: ${_formatValue(_sorted(request.mountPaths))}, "
       "pathToProjectRoot: ${_formatValue(request.pathToProjectRoot)}, "
       "containerWorkingDirectory: ${_formatValue(request.containerWorkingDirectory)}, "

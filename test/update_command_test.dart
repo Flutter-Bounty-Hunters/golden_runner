@@ -115,6 +115,34 @@ void main() {
         expect(command.assembleDockerContainerRequest().flutterVersion, null);
       });
 
+      test("with a pinned Ubuntu version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([
+            "--ubuntu-version",
+            "24.04",
+          ]);
+
+        expect(command.ubuntuVersion, "24.04");
+        // The pinned version flows into the Docker request so it reaches the generated Dockerfile.
+        expect(command.assembleDockerContainerRequest().ubuntuVersion, "24.04");
+        // The version isn't mistaken for the test target.
+        expect(command.testCommandArguments, ["test_goldens"]);
+      });
+
+      test("defaults to no pinned Ubuntu version", () {
+        final command = UpdateGoldensCommand(
+          environment: FakeGoldensCommandEnvironment(
+            currentDirectoryPath: "/workspace/my_app",
+          ),
+        )..parseArguments([]);
+
+        expect(command.ubuntuVersion, null);
+        expect(command.assembleDockerContainerRequest().ubuntuVersion, null);
+      });
+
       test("auto-detects the Flutter version from FVM config (.fvmrc)", () {
         final command = UpdateGoldensCommand(
           environment: FakeGoldensCommandEnvironment(

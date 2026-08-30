@@ -11,6 +11,7 @@ abstract class DockerContainerCommand implements Command {
   static const argDockerImageName = "--docker-image-name";
   static const argDockerVerbosity = "--docker-verbosity";
   static const argFlutterVersion = "--flutter-version";
+  static const argUbuntuVersion = "--ubuntu-version";
 
   /// Verbosity flags. `--silent` suppresses all normal output (but still surfaces
   /// errors and a failing exit code); `--verbose`/`-v` turns on maximum output,
@@ -65,6 +66,20 @@ abstract class DockerContainerCommand implements Command {
   @protected
   void useFlutterVersionIfUnset(String version) => _flutterVersion ??= version;
 
+  /// The Ubuntu version (a Docker Hub `ubuntu` image tag, e.g., `"24.04"`, `"noble"`,
+  /// or `"latest"`) to base the Docker Image on.
+  ///
+  /// When `null`, the default Dockerfile uses `ubuntu:latest`. Pinning a version matters when
+  /// golden output depends on the OS's font rendering (a different Ubuntu can paint goldens
+  /// slightly differently), or to match the Ubuntu version of your CI runner.
+  ///
+  /// This only applies to golden_runner's built-in Dockerfile. When a custom Dockerfile is
+  /// provided via [argDockerFilePath], that Dockerfile controls the Ubuntu version.
+  @protected
+  @visibleForTesting
+  String? get ubuntuVersion => _ubuntuVersion;
+  String? _ubuntuVersion;
+
   /// Docker mount paths from the host machine into the Docker Container, which allows the Docker Container
   /// to alter the host file system.
   ///
@@ -106,6 +121,8 @@ abstract class DockerContainerCommand implements Command {
     _resolveVerbosity(arguments);
 
     _flutterVersion = parseArgumentOption(arguments, argFlutterVersion);
+
+    _ubuntuVersion = parseArgumentOption(arguments, argUbuntuVersion);
   }
 
   /// Resolves [dockerVerbosity] and [silent] from the verbosity flags.
@@ -155,6 +172,7 @@ abstract class DockerContainerCommand implements Command {
         dockerVerbosity: dockerVerbosity,
         silent: silent,
         flutterVersion: flutterVersion,
+        ubuntuVersion: ubuntuVersion,
         mountPaths: mountPaths,
         pathToProjectRoot: pathToProjectRoot,
         containerWorkingDirectory: containerWorkingDirectory,
