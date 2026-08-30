@@ -1,4 +1,5 @@
 ## 0.3.0
+### Aug 30, 2026
  * [BREAKING] Change: The built-in Dockerfile now defaults to Flutter's `stable` channel.
  * Feature: Auto-detect the Flutter version from a project's FVM config (`.fvmrc`, or legacy `.fvm/fvm_config.json`).
  * Feature: Can use a custom Flutter version. Use `--flutter-version` flag.
