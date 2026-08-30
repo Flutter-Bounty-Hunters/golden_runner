@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:collection/collection.dart';
 import 'package:golden_runner/src/infrastructure/build_context.dart';
 import 'package:golden_runner/src/infrastructure/checkpoints.dart';
+import 'package:golden_runner/src/infrastructure/container_diagnostics.dart';
 import 'package:golden_runner/src/infrastructure/logging.dart';
 import 'package:golden_runner/src/infrastructure/native_assets.dart';
 import 'package:meta/meta.dart';
@@ -402,16 +403,26 @@ class Docker {
     GrLog.docker.fine(" - working directory: $workingDirectory");
     GrLog.docker.fine(" - command to run: $commandToRun");
 
+    // In non-silent mode we inherit the real terminal for the live display (color, and in-place
+    // line replacement so a single test doesn't spam dozens of lines). That means we can't watch
+    // the stream directly, so we give the container a name and replay its captured logs through
+    // the scanner after it exits. In silent mode we already pipe the streams, so we scan inline
+    // and let Docker auto-remove the container with `--rm`.
+    final containerName = silent ? null : "${imageName}_run_$pid";
+
+    // Watch the container's output for known failure signatures (e.g. the Dart compiler being
+    // killed when Docker runs out of memory) so we can explain an otherwise-cryptic failure.
+    final failureScanner = StreamingMatcher(ContainerFailureDiagnostics.compilerCrashMarker);
+
     final args = [
       'run',
-      // Remove the container when it exits.
-      '--rm',
-      // Run as an interactive (i) terminal (t) for a nicer live display: color formatting, and
-      // line replacement so a single test doesn't spam dozens of lines. A TTY needs inherited
-      // stdio, so we can't use it in silent mode (where we pipe and filter the streams instead).
+      // In silent mode, auto-remove the container on exit. In non-silent mode we need its logs
+      // after it exits (to scan them), so we name it and remove it ourselves in the `finally`.
+      if (silent) '--rm' else ...['--name', containerName!],
+      // Allocate a pseudo-terminal (t) for a nicer live display: color formatting, and line
+      // replacement. This needs the inherited real terminal (below) to size correctly, so it's
+      // used only in non-silent mode; silent mode pipes clean, TTY-free logs.
       if (!silent) '-it',
-      if (verbosity != DockerVerbosity.standard) //
-        '--log-driver=none',
       // If desired, mount some paths from the host machine into the container to share
       // files.
       for (final path in mountPaths) ...[
@@ -433,13 +444,28 @@ class Docker {
     if (silent) {
       // Silent mode: buffer the container's stdout and only print it if the run fails, so a
       // failing golden test still shows its failure summary (and CI logs aren't a silent
-      // success). stderr is always forwarded so errors surface live.
+      // success). stderr is always forwarded so errors surface live. We scan the streams inline.
       final process = await Process.start('docker', args);
-      exitCode = await consumeSilently(process);
+      exitCode = await consumeSilently(process, onScan: failureScanner.add);
     } else {
-      // Inherit stdio so the run behaves as an interactive terminal (needed for `-it`).
-      final process = await Process.start('docker', args, mode: ProcessStartMode.inheritStdio);
-      exitCode = await process.exitCode;
+      // Non-silent: inherit the real terminal so the run behaves as an interactive terminal
+      // (needed for `-it`'s color and in-place updates). Clear any stale container with our name,
+      // run, then replay the captured logs through the scanner and remove the container.
+      await _removeContainer(containerName!);
+      try {
+        final process = await Process.start('docker', args, mode: ProcessStartMode.inheritStdio);
+        exitCode = await process.exitCode;
+        await _scanContainerLogs(containerName, failureScanner);
+      } finally {
+        await _removeContainer(containerName);
+      }
+    }
+
+    // If the container died in a recognizable way, print a plain-language explanation. This is an
+    // error diagnosis, so it surfaces even in silent mode - but not when the caller asked for no
+    // Docker output at all.
+    if (failureScanner.found && verbosity != DockerVerbosity.none) {
+      _sendToStdErr("\n[golden_runner] ✗ ${ContainerFailureDiagnostics.compilerCrashDiagnostic}\n");
     }
 
     if (exitCode != 0 && throwOnError) {
@@ -516,19 +542,29 @@ COPY ./ /golden_tester
 /// always surface. stdout is buffered and, **only if the process exits non-zero**, written
 /// via [onStdout] (default: this process's stdout) - so a failing run (e.g. a golden test
 /// failure) still shows its output, while a successful run stays silent. Returns the exit code.
+///
+/// [onScan] (if provided) receives every stdout and stderr chunk as it arrives, so callers can
+/// watch the output for failure signatures without buffering all of it.
 @visibleForTesting
 Future<int> consumeSilently(
   Process process, {
   void Function(String)? onStdout,
   void Function(String)? onStderr,
+  void Function(String)? onScan,
 }) async {
   final writeStdout = onStdout ?? stdout.write;
   final writeStderr = onStderr ?? stderr.write;
 
   final bufferedStdout = StringBuffer();
   await Future.wait([
-    process.stdout.transform(utf8.decoder).forEach(bufferedStdout.write),
-    process.stderr.transform(utf8.decoder).forEach(writeStderr),
+    process.stdout.transform(utf8.decoder).forEach((chunk) {
+      onScan?.call(chunk);
+      bufferedStdout.write(chunk);
+    }),
+    process.stderr.transform(utf8.decoder).forEach((chunk) {
+      onScan?.call(chunk);
+      writeStderr(chunk);
+    }),
   ]);
 
   final exitCode = await process.exitCode;
@@ -536,6 +572,37 @@ Future<int> consumeSilently(
     writeStdout(bufferedStdout.toString());
   }
   return exitCode;
+}
+
+/// Feeds the captured logs of the container named [containerName] through [matcher], so a
+/// non-silent run (whose live output was inherited by the terminal, not piped to us) can still be
+/// scanned for failure signatures after it exits.
+///
+/// Best-effort: if `docker logs` isn't available (e.g. a `none` log driver, or Docker errors),
+/// the scan simply finds nothing, since the diagnosis is a nice-to-have on top of the real output.
+Future<void> _scanContainerLogs(String containerName, StreamingMatcher matcher) async {
+  try {
+    final process = await Process.start('docker', ['logs', containerName]);
+    await Future.wait([
+      process.stdout.transform(utf8.decoder).forEach(matcher.add),
+      process.stderr.transform(utf8.decoder).forEach(matcher.add),
+    ]);
+    await process.exitCode;
+  } catch (_) {
+    // Ignore - detection is best-effort.
+  }
+}
+
+/// Force-removes the container named [containerName], ignoring the common case where no such
+/// container exists. Used to clear a stale container before a named run, and to clean up after.
+Future<void> _removeContainer(String containerName) async {
+  try {
+    final process = await Process.start('docker', ['rm', '-f', containerName]);
+    await Future.wait([process.stdout.drain<void>(), process.stderr.drain<void>()]);
+    await process.exitCode;
+  } catch (_) {
+    // Ignore - best-effort cleanup.
+  }
 }
 
 void _sendToStdOut(String output) {

@@ -169,6 +169,27 @@ Note: this works for **absolute** path dependencies (and the relative path deps 
 external packages). A relative `path:` in your own project that points *above* the copied project
 root isn't supported — use an absolute path, or widen `--path-to-project-root` to include it.
 
+## Out-of-memory failures
+Large golden suites can exhaust the memory Docker has available, and when that happens the Linux
+OOM killer inside Docker's VM abruptly kills the Dart compiler. Flutter surfaces this only as:
+
+```
+Error: The Dart compiler exited unexpectedly.
+```
+
+followed by a Dart stack trace — with no mention of memory — so it looks like a compiler or test
+bug when it isn't.
+
+`golden_runner` watches the container's output for this signature and, when it sees it, prints a
+clear explanation and the usual fixes:
+
+ * Raise Docker's memory limit (Docker Desktop → Settings → Resources); a large app may need 8 GB+.
+ * Add `--concurrency=1` to your `goldens` command (it forwards to `flutter test`) to reduce the
+   number of test isolates compiling at once.
+ * Target a smaller test directory so fewer test files run at once.
+
+The diagnosis prints even in `--silent` mode, since it explains a failure.
+
 ## Large projects and the build context
 `golden_runner` copies your project into the Docker image to run tests. Without a `.dockerignore`,
 the *entire* directory — including generated output like `build/` and `.dart_tool/`, plus `.git` —

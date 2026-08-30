@@ -47,6 +47,17 @@ void main() {
       await consumeSilently(process, onStdout: (_) {}, onStderr: errs.add);
       expect(errs.join(), contains("heads up"));
     });
+
+    test("scans both stdout and stderr for failure signatures", () async {
+      final scanner = StreamingMatcher(ContainerFailureDiagnostics.compilerCrashMarker);
+      final process = await Process.start(
+        "sh",
+        ["-c", "echo 'The Dart compiler exited unexpectedly.'; exit 1"],
+      );
+
+      await consumeSilently(process, onStdout: (_) {}, onStderr: (_) {}, onScan: scanner.add);
+      expect(scanner.found, isTrue);
+    });
   });
 
   group("buildAndRun >", () {
