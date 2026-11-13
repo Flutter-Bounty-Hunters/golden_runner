@@ -41,7 +41,18 @@ abstract class GoldensCommand extends DockerContainerCommand {
         // Mount any local `path:` dependencies that live outside the copied project
         // (read-only), at their absolute path, so the container's `pub get` resolves them.
         ..._externalPathDependencyMounts,
+        // Keep the container's pub cache in a named volume, so `pub get` only downloads packages
+        // the first time, instead of on every run. On first use, Docker seeds the volume with
+        // whatever the image already has at that path, so a custom image's pre-fetched packages
+        // still count.
+        pubCacheMount,
       };
+
+  /// Volume mount spec that keeps the container's pub cache in a named Docker volume across runs.
+  ///
+  /// The built-in Dockerfile runs as root, so the cache is at `/root/.pub-cache`. Pass
+  /// `--fresh-pub-cache` to empty it first.
+  static const pubCacheMount = "$pubCacheVolume:/root/.pub-cache";
 
   /// Bind-mount specs (`<hostDir>:<hostDir>:ro`) for local path dependencies that
   /// resolve outside the copied project tree.

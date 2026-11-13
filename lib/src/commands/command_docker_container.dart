@@ -12,6 +12,7 @@ abstract class DockerContainerCommand implements Command {
   static const argDockerVerbosity = "--docker-verbosity";
   static const argFlutterVersion = "--flutter-version";
   static const argUbuntuVersion = "--ubuntu-version";
+  static const argFreshPubCache = "--fresh-pub-cache";
 
   /// Verbosity flags. `--silent` suppresses all normal output (but still surfaces
   /// errors and a failing exit code); `--verbose`/`-v` turns on maximum output,
@@ -49,8 +50,10 @@ abstract class DockerContainerCommand implements Command {
   /// The Flutter version to install in the Docker Container, e.g., `"3.44.6"`, `"stable"`,
   /// or any git ref (tag/branch/commit) of the flutter/flutter repository.
   ///
-  /// When `null`, the default Dockerfile clones Flutter's default branch. Pinning a version
-  /// is important when the project (or its dependencies) only build against a specific Flutter
+  /// When `null`, the default Dockerfile clones Flutter's stable branch. A release version
+  /// installs from Flutter's prebuilt archive where possible (see `createGoldenTesterDockerfile`).
+  ///
+  /// Pinning a version is important when the project (or its dependencies) only build against a specific Flutter
   /// SDK - a mismatched SDK can fail to compile, or paint goldens differently.
   ///
   /// This only applies to golden_runner's built-in Dockerfile. When a custom Dockerfile is
@@ -79,6 +82,13 @@ abstract class DockerContainerCommand implements Command {
   @visibleForTesting
   String? get ubuntuVersion => _ubuntuVersion;
   String? _ubuntuVersion;
+
+  /// Whether to start with an empty pub cache (`--fresh-pub-cache`), instead of reusing the
+  /// packages that earlier runs downloaded into the [pubCacheVolume].
+  @protected
+  @visibleForTesting
+  bool get freshPubCache => _freshPubCache;
+  bool _freshPubCache = false;
 
   /// Docker mount paths from the host machine into the Docker Container, which allows the Docker Container
   /// to alter the host file system.
@@ -123,6 +133,8 @@ abstract class DockerContainerCommand implements Command {
     _flutterVersion = parseArgumentOption(arguments, argFlutterVersion);
 
     _ubuntuVersion = parseArgumentOption(arguments, argUbuntuVersion);
+
+    _freshPubCache = parseArgumentFlag(arguments, argFreshPubCache);
   }
 
   /// Resolves [dockerVerbosity] and [silent] from the verbosity flags.
@@ -173,6 +185,7 @@ abstract class DockerContainerCommand implements Command {
         silent: silent,
         flutterVersion: flutterVersion,
         ubuntuVersion: ubuntuVersion,
+        freshPubCache: freshPubCache,
         mountPaths: mountPaths,
         pathToProjectRoot: pathToProjectRoot,
         containerWorkingDirectory: containerWorkingDirectory,
