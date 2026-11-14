@@ -26,6 +26,7 @@ void main() {
         expect(command.containerWorkingDirectory, "/golden_tester");
         expect(command.mountPaths, {
           "/workspace/my_app/test_goldens:/golden_tester/test_goldens",
+          GoldensCommand.pubCacheMount,
         });
         expect(command.testBaseDirectory, "test_goldens");
         expect(command.testCommandArguments, ["test_goldens"]);
@@ -66,6 +67,7 @@ void main() {
         expect(command.containerWorkingDirectory, "/golden_tester/my_app");
         expect(command.mountPaths, {
           "/workspace/repo/my_app/special_test_goldens:/golden_tester/my_app/special_test_goldens",
+          GoldensCommand.pubCacheMount,
         });
         expect(command.testBaseDirectory, "special_test_goldens");
         expect(command.testCommandArguments, [
@@ -105,6 +107,7 @@ void main() {
         expect(command.containerWorkingDirectory, "/golden_tester");
         expect(command.mountPaths, {
           "/workspace/my_app/test_goldens:/golden_tester/test_goldens",
+          GoldensCommand.pubCacheMount,
         });
         expect(command.testBaseDirectory, "test_goldens");
         expect(command.testCommandArguments, ["--plain-name", "My test name", "test_goldens"]);
@@ -204,6 +207,7 @@ void main() {
             containerWorkingDirectory: "/golden_tester",
             mountPaths: {
               "/workspace/my_app/test_goldens:/golden_tester/test_goldens",
+              GoldensCommand.pubCacheMount,
             },
             command: ["flutter", "test", "test_goldens"],
           )),
@@ -230,6 +234,7 @@ void main() {
             containerWorkingDirectory: "/golden_tester/my_app",
             mountPaths: {
               "/workspace/repo/my_app/test_goldens:/golden_tester/my_app/test_goldens",
+              GoldensCommand.pubCacheMount,
             },
             command: ["flutter", "test", "test_goldens"],
           )),
@@ -256,6 +261,7 @@ void main() {
             containerWorkingDirectory: "/golden_tester/packages/my_app",
             mountPaths: {
               "/workspace/repo/packages/my_app/test_goldens:/golden_tester/packages/my_app/test_goldens",
+              GoldensCommand.pubCacheMount,
             },
             command: ["flutter", "test", "test_goldens"],
           )),
@@ -286,6 +292,7 @@ void main() {
             containerWorkingDirectory: "/golden_tester/packages/my_app",
             mountPaths: {
               "/workspace/repo/packages/my_app/my_test_dir:/golden_tester/packages/my_app/my_test_dir",
+              GoldensCommand.pubCacheMount,
             },
             command: ["flutter", "test", "my_test_dir"],
           )),
@@ -316,6 +323,7 @@ void main() {
             containerWorkingDirectory: "/golden_tester/packages/my_app",
             mountPaths: {
               "/workspace/repo/packages/my_app/test_goldens:/golden_tester/packages/my_app/test_goldens",
+              GoldensCommand.pubCacheMount,
             },
             command: [
               "flutter",
@@ -350,6 +358,7 @@ void main() {
             containerWorkingDirectory: "/golden_tester/packages/my_app",
             mountPaths: {
               "/workspace/repo/packages/my_app/my_test_dir:/golden_tester/packages/my_app/my_test_dir",
+              GoldensCommand.pubCacheMount,
             },
             command: [
               "flutter",
@@ -386,6 +395,7 @@ void main() {
             containerWorkingDirectory: "/golden_tester/packages/my_app",
             mountPaths: {
               "/workspace/repo/packages/my_app/test_goldens:/golden_tester/packages/my_app/test_goldens",
+              GoldensCommand.pubCacheMount,
             },
             command: [
               "flutter",

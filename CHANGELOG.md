@@ -1,3 +1,9 @@
+## Unreleased
+ * Adjustment: A pinned Flutter release now installs from Flutter's prebuilt Linux archive instead of a `git clone`, on x64 containers.
+ * Adjustment: When Flutter must be cloned, the clone is treeless (`--filter=tree:0`), which is much smaller and faster.
+ * Adjustment: The container's pub cache persists across runs in the `golden_runner_pub_cache` Docker volume, so dependencies are only downloaded once. Pass `--fresh-pub-cache` to start from an empty cache.
+ * Fix: `--flutter-version` now accepts a commit hash.
+
 ## 0.3.0
 ### Aug 30, 2026
  * [BREAKING] Change: The built-in Dockerfile now defaults to Flutter's `stable` channel.

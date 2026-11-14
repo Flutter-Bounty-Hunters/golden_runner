@@ -84,6 +84,23 @@ void main() {
       expect(docker.getCallCountFor("deleteImage"), 1);
     });
 
+    test("keeps the pub cache by default", () async {
+      final docker = FakeDocker();
+      Docker.useDocker(docker);
+
+      await const DockerGoldenContainer().buildAndRun(_request());
+      expect(docker.getCallCountFor("deleteVolume"), 0);
+    });
+
+    test("deletes the pub cache volume when a fresh pub cache is requested", () async {
+      final docker = FakeDocker();
+      Docker.useDocker(docker);
+
+      await const DockerGoldenContainer().buildAndRun(_request(freshPubCache: true));
+      expect(docker.getCallCountFor("deleteVolume"), 1);
+      expect(docker.getCallCountFor("runContainer"), 1);
+    });
+
     test("passes the silent flag through to the container run", () async {
       final docker = FakeDocker();
       Docker.useDocker(docker);
@@ -102,10 +119,11 @@ void main() {
 /// A custom Dockerfile path skips the (filesystem-touching) context guard and
 /// native-asset detection, keeping these tests hermetic. `none` verbosity keeps
 /// the checkpoints quiet.
-RunDockerContainerRequest _request({bool silent = false}) => RunDockerContainerRequest(
+RunDockerContainerRequest _request({bool silent = false, bool freshPubCache = false}) => RunDockerContainerRequest(
       dockerImageName: "golden_tester",
       dockerVerbosity: DockerVerbosity.none,
       silent: silent,
+      freshPubCache: freshPubCache,
       dockerFilePath: "custom.Dockerfile",
       command: const ["flutter", "test"],
     );

@@ -115,8 +115,25 @@ goldens update --flutter-version 3.44.6
 goldens test --flutter-version beta
 ```
 
+For a release version (`3.44.6`, or a beta such as `3.51.0-0.1.pre`), the container installs
+Flutter's prebuilt Linux archive, which is much faster than cloning the Flutter repository. Flutter
+only publishes x64 Linux archives, so on other architectures (e.g. an arm64 container on an Apple
+Silicon Mac), or when the archive can't be downloaded, the container clones that release instead.
+Channels, branches and commits are always cloned. Clones skip file contents outside the checked-out
+commit, but keep the commit history that Flutter needs to work out its version.
+
 If you provide your own custom Dockerfile, this flag is ignored and you'll need to specify the
 desired Flutter version, yourself.
+
+## Pub cache
+`golden_runner` keeps the container's pub cache in a Docker volume named `golden_runner_pub_cache`,
+shared by every project. The first run downloads your dependencies; later runs reuse them, so
+`pub get` takes seconds instead of minutes. To start from an empty cache, so every dependency is
+downloaded again, pass `--fresh-pub-cache`:
+
+```
+goldens update --fresh-pub-cache
+```
 
 ## Specific Ubuntu Version
 By default, `golden_runner` builds its image on `ubuntu:latest`. To base it on a different Ubuntu
@@ -295,7 +312,7 @@ RUN apt update
 # clang/build-essential are only needed if a package has a Dart native-asset build hook
 # (package:native_toolchain_c); drop them for a lighter image if none of yours do. golden_runner's
 # generated Dockerfile adds them only when needed, but this static reference always includes them.
-RUN apt install -y git curl unzip clang build-essential
+RUN apt install -y git curl unzip xz-utils clang build-essential
 
 # Print the Ubuntu version. Useful when there are failing tests.
 RUN cat /etc/lsb-release
@@ -303,7 +320,7 @@ RUN cat /etc/lsb-release
 # Invalidate the cache when flutter pushes a new commit.
 ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable
 
-RUN git clone https://github.com/flutter/flutter.git ${FLUTTER_HOME}
+RUN git clone --filter=tree:0 --single-branch --branch stable https://github.com/flutter/flutter.git "${FLUTTER_HOME}"
 
 RUN flutter doctor
 

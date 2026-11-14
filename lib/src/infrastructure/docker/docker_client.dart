@@ -21,8 +21,17 @@ class DockerGoldenContainer {
     // for silent mode, or for no Docker output at all.
     final checkpoints = GrCheckpoints(
       enabled: !request.silent && request.dockerVerbosity != DockerVerbosity.none,
-      totalSteps: 3,
+      totalSteps: request.freshPubCache ? 4 : 3,
     );
+
+    // When asked, delete the persistent pub cache volume, so this run's `pub get` downloads
+    // everything again. The container recreates the volume when it mounts it.
+    if (request.freshPubCache) {
+      await checkpoints.step(
+        "Clearing pub cache",
+        () => Docker.instance.deleteVolume(volumeName: pubCacheVolume, verbosity: request.dockerVerbosity),
+      );
+    }
 
     // Before the (potentially slow) build, keep the build context small: if it's
     // large and has no `.dockerignore`, the whole directory - including generated
@@ -122,6 +131,9 @@ class DockerGoldenContainer {
   }
 }
 
+/// The named Docker volume that holds the container's pub cache across runs.
+const pubCacheVolume = "golden_runner_pub_cache";
+
 class RunDockerContainerRequest {
   const RunDockerContainerRequest({
     this.dockerFilePath,
@@ -130,6 +142,7 @@ class RunDockerContainerRequest {
     this.silent = false,
     this.flutterVersion,
     this.ubuntuVersion,
+    this.freshPubCache = false,
     this.mountPaths = const {},
     this.pathToProjectRoot = ".",
     this.containerWorkingDirectory = ".",
@@ -178,6 +191,10 @@ class RunDockerContainerRequest {
   /// is provided via [dockerFilePath].
   final String? ubuntuVersion;
 
+  /// Whether to delete the [pubCacheVolume] before running, so `pub get` downloads every
+  /// dependency again instead of reusing the ones cached by earlier runs.
+  final bool freshPubCache;
+
   /// Locations on the host machine where the Container should be able to read/write.
   final Set<String> mountPaths;
 
@@ -209,6 +226,7 @@ class RunDockerContainerRequest {
           silent == other.silent &&
           flutterVersion == other.flutterVersion &&
           ubuntuVersion == other.ubuntuVersion &&
+          freshPubCache == other.freshPubCache &&
           pathToProjectRoot == other.pathToProjectRoot &&
           containerWorkingDirectory == other.containerWorkingDirectory &&
           const DeepCollectionEquality().equals(mountPaths, other.mountPaths) &&
@@ -222,6 +240,7 @@ class RunDockerContainerRequest {
         silent,
         flutterVersion,
         ubuntuVersion,
+        freshPubCache,
         const DeepCollectionEquality().hash(mountPaths),
         pathToProjectRoot,
         containerWorkingDirectory,
@@ -396,6 +415,33 @@ class Docker {
     return exitCode;
   }
 
+  /// Deletes the Docker volume with the given [volumeName], doing nothing if it doesn't exist.
+  ///
+  /// This method calls out to Docker, which must be installed and running on the host
+  /// operating system.
+  Future<ExitCode> deleteVolume({
+    required String volumeName,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
+  }) async {
+    final process = await Process.start('docker', ['volume', 'rm', '-f', volumeName]);
+
+    // `docker volume rm` prints the volume's name on success, which is only worth showing
+    // at standard verbosity.
+    if (verbosity == DockerVerbosity.standard) {
+      await stdout.addStream(process.stdout);
+    } else {
+      await process.stdout.drain();
+    }
+
+    if (verbosity != DockerVerbosity.none) {
+      await stderr.addStream(process.stderr);
+    } else {
+      await process.stderr.drain();
+    }
+
+    return process.exitCode;
+  }
+
   /// Starts a Docker container based on the Docker image with the given [imageName].
   ///
   /// After starting the container, the [commandToRun] is run within the container.
@@ -498,14 +544,24 @@ String _join(String directory, String file) => "$directory${Platform.pathSeparat
 
 /// Builds golden_runner's built-in ("virtual") Dockerfile.
 ///
-/// When [flutterVersion] is provided, the container clones that exact git ref
-/// (tag/branch/commit) of flutter/flutter, so the SDK matches the project (and CI)
-/// - a pinned version never moves, so Docker caches the clone layer.
+/// When [flutterVersion] is a Flutter release (`3.44.6`, or a beta such as `3.45.0-0.1.pre`), the
+/// container installs that release's prebuilt Linux archive, the same SDK Flutter's website and
+/// most CI setups install. It's a single download, much faster than cloning flutter/flutter. Flutter
+/// only publishes x64 Linux archives, so on any other architecture (e.g. an arm64 container on an
+/// Apple Silicon Mac), or if the archive can't be downloaded, the container clones that release's
+/// tag instead.
 ///
-/// When [flutterVersion] is `null`, the container tracks Flutter's **stable**
-/// channel: it clones `--branch stable`, and an `ADD` of stable's git ref busts the
-/// Docker cache whenever stable advances, so the clone picks up new stable releases.
-/// (For strict reproducibility, pass a specific version instead.)
+/// Any other [flutterVersion] (a branch like `beta` or `master`, or a commit hash) is cloned. A
+/// pinned version never moves, so Docker caches the install layer.
+///
+/// When [flutterVersion] is `null`, the container tracks Flutter's **stable** channel: it clones
+/// `--branch stable`, and an `ADD` of stable's git ref busts the Docker cache whenever stable
+/// advances, so the clone picks up new stable releases. (For strict reproducibility, pass a
+/// specific version instead.)
+///
+/// Every clone is treeless (`--filter=tree:0`): it downloads commit history but only the files of
+/// the checked-out commit. Flutter computes its version from the tags in that history, so a shallow
+/// (`--depth 1`) clone would report a version like `0.0.0-unknown` and fail SDK constraints.
 ///
 /// [ubuntuVersion] selects the base image tag (`FROM ubuntu:<tag>`); when `null`, `latest` is
 /// used. Pin it when golden output depends on the OS's font rendering, or to match CI.
@@ -514,21 +570,14 @@ String _join(String directory, String file) => "$directory${Platform.pathSeparat
 /// projects with a Dart native-asset build hook (package:native_toolchain_c).
 @visibleForTesting
 String createGoldenTesterDockerfile({String? flutterVersion, String? ubuntuVersion, bool includeCToolchain = true}) {
-  final installFlutter = flutterVersion != null
-      ? "# Clone the pinned Flutter version so the container matches the project (and CI).\n"
-          "RUN git clone https://github.com/flutter/flutter.git --branch $flutterVersion \${FLUTTER_HOME}"
-      : "# Default to Flutter's stable channel. The ADD busts the Docker cache whenever stable\n"
-          "# advances, so the clone below picks up new stable releases.\n"
-          "ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable\n"
-          "\n"
-          "RUN git clone https://github.com/flutter/flutter.git --branch stable \${FLUTTER_HOME}";
+  final installFlutter = _installFlutterInstructions(flutterVersion);
 
-  // git/curl/unzip are always needed to fetch Flutter. clang and build-essential provide a
-  // C toolchain, added only when the project has a Dart native-asset build hook
-  // (package:native_toolchain_c) that compiles native code during `flutter test`; without a
-  // compiler on PATH such builds fail with "No compiler configured on host". Projects with no
-  // native hooks get a lighter image without the toolchain.
-  final aptPackages = includeCToolchain ? "git curl unzip clang build-essential" : "git curl unzip";
+  // git/curl/unzip are always needed to fetch Flutter, and xz-utils to unpack a release archive.
+  // clang and build-essential provide a C toolchain, added only when the project has a Dart
+  // native-asset build hook (package:native_toolchain_c) that compiles native code during
+  // `flutter test`; without a compiler on PATH such builds fail with "No compiler configured on
+  // host". Projects with no native hooks get a lighter image without the toolchain.
+  final aptPackages = includeCToolchain ? "git curl unzip xz-utils clang build-essential" : "git curl unzip xz-utils";
 
   return """
 FROM ubuntu:${ubuntuVersion ?? "latest"}
@@ -554,6 +603,64 @@ RUN flutter doctor
 COPY ./ /golden_tester
 """;
 }
+
+String _installFlutterInstructions(String? flutterVersion) {
+  if (flutterVersion == null) {
+    return "# Default to Flutter's stable channel. The ADD busts the Docker cache whenever stable\n"
+        "# advances, so the clone below picks up new stable releases.\n"
+        "ADD https://api.github.com/repos/flutter/flutter/git/refs/heads/stable ./flutter-latest-stable\n"
+        "\n"
+        "RUN ${_cloneFlutterBranch("stable")}";
+  }
+
+  final archiveUrl = _flutterReleaseArchiveUrl(flutterVersion);
+  if (archiveUrl != null) {
+    return "# Install the pinned Flutter release from its prebuilt archive, so the container matches the\n"
+        "# project (and CI). Flutter only publishes x64 Linux archives, so other architectures clone.\n"
+        "RUN if [ \"\$(dpkg --print-architecture)\" = amd64 ] \\\n"
+        "      && curl -fsSL \"$archiveUrl\" -o /tmp/flutter.tar.xz; then \\\n"
+        "      mkdir -p \"\${FLUTTER_HOME}\" \\\n"
+        "      && tar -xJf /tmp/flutter.tar.xz --no-same-owner --strip-components=1 -C \"\${FLUTTER_HOME}\" \\\n"
+        "      && rm /tmp/flutter.tar.xz; \\\n"
+        "    else \\\n"
+        "      ${_cloneFlutterBranch(flutterVersion)}; \\\n"
+        "    fi";
+  }
+
+  if (_commitHash.hasMatch(flutterVersion)) {
+    // `git clone --branch` doesn't accept a commit, so fetch every branch's history and check the
+    // commit out.
+    return "# Clone the pinned Flutter commit so the container matches the project (and CI).\n"
+        "RUN git clone --filter=tree:0 --no-checkout $_flutterRepo \"\${FLUTTER_HOME}\" \\\n"
+        "    && git -C \"\${FLUTTER_HOME}\" checkout $flutterVersion";
+  }
+
+  return "# Clone the pinned Flutter version so the container matches the project (and CI).\n"
+      "RUN ${_cloneFlutterBranch(flutterVersion)}";
+}
+
+/// Returns the URL of the prebuilt Linux (x64) archive for the Flutter release [flutterVersion],
+/// or `null` when [flutterVersion] doesn't name a release (e.g. a channel, branch or commit).
+String? _flutterReleaseArchiveUrl(String flutterVersion) {
+  final channel = _stableRelease.hasMatch(flutterVersion)
+      ? "stable"
+      : _betaRelease.hasMatch(flutterVersion)
+          ? "beta"
+          : null;
+  if (channel == null) {
+    return null;
+  }
+  return "https://storage.googleapis.com/flutter_infra_release/releases/$channel/linux/"
+      "flutter_linux_$flutterVersion-$channel.tar.xz";
+}
+
+String _cloneFlutterBranch(String branchOrTag) =>
+    "git clone --filter=tree:0 --single-branch --branch $branchOrTag $_flutterRepo \"\${FLUTTER_HOME}\"";
+
+const _flutterRepo = "https://github.com/flutter/flutter.git";
+final _stableRelease = RegExp(r"^\d+\.\d+\.\d+$");
+final _betaRelease = RegExp(r"^\d+\.\d+\.\d+-\d+\.\d+\.pre$");
+final _commitHash = RegExp(r"^[0-9a-f]{7,40}$");
 
 /// Consumes a [process]'s output for silent mode.
 ///
@@ -699,6 +806,15 @@ class FakeDocker implements Docker {
   }) async {
     _incrementCallCount("deleteImage");
     _images.remove(imageName);
+    return 0;
+  }
+
+  @override
+  Future<ExitCode> deleteVolume({
+    required String volumeName,
+    DockerVerbosity verbosity = DockerVerbosity.errorOnly,
+  }) async {
+    _incrementCallCount("deleteVolume");
     return 0;
   }
 
